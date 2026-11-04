@@ -978,6 +978,17 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Versiones a **39** en `SeriesKaoProvider/build.gradle.kts` y `plugins.json`; `fileSize` pendiente. Gradle no ejecutado por regla del repo. Comando: ` .\gradlew.bat :SeriesKaoProvider:make --console=plain -q`.
 - ⏸️ **Pendiente**: compilar e instalar v39; repetir Titán T1E1 y compartir líneas `loadLinks player WebView`, `player estático` e `inlineScript`. Con esos datos se podrá implementar el parser correcto del player que entrega `/vidurl/`.
 
+## SeriesKao — renderizar Embed69 en iframe y resolver servidores visibles (3 Nov 2026 v40)
+- **Logs v39 del usuario**: `/vidurl/tt1709198-1x01/` entrega HTML de Embed69 con texto visible `dood Stream HD`, `streamwish Stream Multicalidad`, `vidhide Stream Multicalidad` y `1fichier Descarga Directa`. El primer script ejecuta `if(window.self===window.top){document.documentElement.innerHTML='';window.stop();}`, vaciando la página cuando WebView la abre directamente. Así se explica el WebView “Página web no disponible” y los 0 links; los servidores sí están en la ficha.
+- **Fix v40**: el renderer WebView ahora acepta `renderInIframe`; carga `/vidurl/` en un iframe dentro de un documento padre del mismo origen para que el script de Embed69 no active el bloqueo top-level. Recoge el HTML del iframe y simula clics en controles cuyo texto/atributos indican Dood, VidHide o StreamWish, guardando snapshots tras cada selección. `loadLinks` extrae URLs conocidas de esos snapshots y usa los extractores existentes.
+- Versiones a **40** en `SeriesKaoProvider/build.gradle.kts` y `plugins.json`; `fileSize` pendiente. Gradle no ejecutado por regla del repo. Comando: ` .\gradlew.bat :SeriesKaoProvider:make --console=plain -q`.
+- ⏸️ **Pendiente**: instalar v40 y probar Titán T1E1. Revisar `[WebView] renderizando ... iframe=true`, `Embed69 servidores WebView=N`, `loadLinks EMIT` y `loadLinks FIN`; comprobar que los servidores detectados abren sus extractores. VidHide hls4 queda para después de cerrar Titán.
+
+## SeriesKao — tolerar errores de recursos secundarios en Embed69 (3 Nov 2026 v41)
+- Ajustado el renderer con iframe para no cancelar toda la captura ante `onReceivedError` de recursos secundarios (scripts/anuncios) del player; ahora registra URL/error y continúa sondeando el DOM del iframe. Se corrige también el índice al hacer clic en cada botón de servidor, para que un handler fallido no salte el siguiente control.
+- Versiones a **41** en `SeriesKaoProvider/build.gradle.kts` y `plugins.json`; `fileSize` pendiente. Gradle no ejecutado. Comando: ` .\gradlew.bat :SeriesKaoProvider:make --console=plain -q`.
+- ⏸️ Pendiente probar Titán T1E1 en dispositivo; buscar `iframe=true`, `Embed69 servidores WebView=N` y emisiones de links. Luego retomar el error hls4 de VidHide.
+
 ## OkruProvider — normalizar source y contar callbacks (31 Oct 2026 v6)
 - **Log del usuario**: la búsqueda y carga del video OK; `OkRuExtractor -> isFound=true` tras ~12 s, pero el player no mostraba los enlaces.
 - **Hallazgo de código**: `isFound=true` solo se establecía dentro del callback, así que el extractor sí emitió al menos un link. El extractor construye esos links con `source=OkRU`/`OkRu`, pero el MainAPI registrado se llama `OKRU`; el provider entregaba el link del extractor sin normalizar `source`. Es un desajuste real que puede impedir asociar/reproducir el enlace desde el MainAPI.

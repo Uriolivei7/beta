@@ -669,7 +669,13 @@ private const val DUMP_JS = "(function(){try{NativeBridge.onHtml(document.docume
 
 private val webViewMutex = Mutex()
 
-internal suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs: Long = 12000L, readyJs: String? = null): String? {
+internal suspend fun renderViaWebView(
+    pageUrl: String,
+    referer: String?,
+    waitMs: Long = 12000L,
+    readyJs: String? = null,
+    renderInIframe: Boolean = false,
+): String? {
     webViewMutex.withLock {
         return withContext(Dispatchers.Main) {
         val appCtx = SerieskaoProvider.pluginContext?.applicationContext ?: run {
@@ -691,10 +697,23 @@ internal suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs:
             val deferred = CompletableDeferred<String?>()
             val polls = java.util.concurrent.atomic.AtomicInteger(0)
             val maxPolls = (waitMs / 2000L).toInt().coerceAtLeast(1)
+            val frameId = "serieskao-render-target"
             fun dump() {
                 if (deferred.isCompleted) return
                 try {
-                    webView?.evaluateJavascript(DUMP_JS, null)
+                    val dumpScript = if (!renderInIframe) DUMP_JS else """(function(){try{
+                        var f=document.getElementById('$frameId'),d=f&&f.contentDocument;
+                        if(!d||!d.documentElement){NativeBridge.onHtml('FRAME_NOT_READY');return;}
+                        var out=[d.documentElement.outerHTML];
+                        var es=Array.prototype.slice.call(d.querySelectorAll('button,a,[onclick],[role="button"],[data-server]'));
+                        es=es.filter(function(e){return /dood|vidhide|streamwish/i.test((e.innerText||'')+' '+(e.outerHTML||''));});
+                        var i=0;function step(){
+                            if(i>=es.length){NativeBridge.onHtml(out.join('\\n<!--SERIESKAO_SERVER_SNAPSHOT-->\\n'));return;}
+                            var e=es[i++];try{e.click();}catch(x){}
+                            setTimeout(function(){try{out.push(d.documentElement.outerHTML);}catch(e){}step();},1200);
+                        }step();
+                    }catch(e){NativeBridge.onHtml('FRAME_ERROR:'+e);}})()"""
+                    webView?.evaluateJavascript(dumpScript, null)
                 } catch (_: Exception) {
                     if (!deferred.isCompleted) deferred.complete(null)
                 }
@@ -703,7 +722,11 @@ internal suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs:
                 if (deferred.isCompleted) return
                 try {
                     webView?.evaluateJavascript(
-                        "(function(){try{var h=document.documentElement.outerHTML;NativeBridge.onPoll(($readyJs));}catch(e){NativeBridge.onPoll(false);}})()",
+                        if (!renderInIframe) {
+                            "(function(){try{var h=document.documentElement.outerHTML;NativeBridge.onPoll(($readyJs));}catch(e){NativeBridge.onPoll(false);}})()"
+                        } else {
+                            "(function(){try{var f=document.getElementById('$frameId'),d=f&&f.contentDocument;var h=d&&d.documentElement?d.documentElement.outerHTML:'';NativeBridge.onPoll(($readyJs));}catch(e){NativeBridge.onPoll(false);}})()"
+                        },
                         null
                     )
                 } catch (_: Exception) {
@@ -744,12 +767,26 @@ internal suspend fun renderViaWebView(pageUrl: String, referer: String?, waitMs:
                 }
 
                 override fun onReceivedError(view: WebView?, errorCode: Int, description: String?, failingUrl: String?) {
-                    if (!deferred.isCompleted) deferred.complete(null)
+                    if (renderInIframe) {
+                        Log.d(KAO_TAG, "[WebView] recurso iframe error=$errorCode url=${failingUrl?.take(140)}")
+                        if (!deferred.isCompleted) mainHandler.postDelayed({ pollOnce() }, 1000L)
+                    } else if (!deferred.isCompleted) {
+                        deferred.complete(null)
+                    }
                 }
             }
-            if (!referer.isNullOrBlank()) webView.loadUrl(pageUrl, mapOf("Referer" to referer))
-            else webView.loadUrl(pageUrl)
-            Log.d(KAO_TAG, "[WebView] renderizando ${pageUrl.take(100)}")
+            if (renderInIframe) {
+                val origin = runCatching { java.net.URL(pageUrl).let { "${it.protocol}://${it.host}/" } }.getOrDefault("https://serieskao.top/")
+                val baseUrl = referer?.takeIf { it.startsWith(origin, ignoreCase = true) } ?: origin
+                val escapedUrl = pageUrl.replace("&", "&amp;").replace("\"", "&quot;")
+                val wrapper = "<html><head><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"></head><body style=\"margin:0\"><iframe id=\"$frameId\" src=\"$escapedUrl\" style=\"width:100%;height:100vh;border:0\"></iframe></body></html>"
+                webView.loadDataWithBaseURL(baseUrl, wrapper, "text/html", "UTF-8", null)
+            } else if (!referer.isNullOrBlank()) {
+                webView.loadUrl(pageUrl, mapOf("Referer" to referer))
+            } else {
+                webView.loadUrl(pageUrl)
+            }
+            Log.d(KAO_TAG, "[WebView] renderizando ${pageUrl.take(100)} iframe=$renderInIframe")
             withTimeoutOrNull(waitMs + 15000L) { deferred.await() }
         } catch (e: CancellationException) {
             throw e

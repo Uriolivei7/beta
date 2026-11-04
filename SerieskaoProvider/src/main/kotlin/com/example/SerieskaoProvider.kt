@@ -457,6 +457,23 @@ class SerieskaoProvider : MainAPI() {
             }
         }
 
+        fun findPlayerServerUrls(html: String): List<String> {
+            val normalized = html.replace("\\/", "/").replace("&amp;", "&")
+            val knownHosts = listOf(
+                "dood", "do7go", "vidhide", "morencius", "minochinos", "mivalyo", "dinisglows", "dhtpre",
+                "streamwish", "hglink", "swdyu", "cybervynx", "dumbalag", "awish"
+            )
+            return Regex("""(?i)(?:https?:)?//[^\s'"<>\\]+""").findAll(normalized)
+                .mapNotNull { match ->
+                    val candidate = match.value.trimEnd(')', ',', ';', '.')
+                    val url = if (candidate.startsWith("//")) "https:$candidate" else candidate
+                    val host = runCatching { java.net.URL(url).host.lowercase() }.getOrDefault("")
+                    url.takeIf { host != "serieskao.top" && host != "embed69.org" && knownHosts.any(host::contains) }
+                }
+                .distinct()
+                .toList()
+        }
+
         var rawMatch = extractDataLink(playerHtml)
         if (rawMatch == null || !playerHtml.contains("POW_CHALLENGE") || !playerHtml.contains("POW_SALT")) {
             Log.d(TAG, "loadLinks player sin dataLink/PoW; intentando WebView: $playerUrl")
@@ -464,7 +481,12 @@ class SerieskaoProvider : MainAPI() {
                 pageUrl = playerUrl,
                 referer = data,
                 waitMs = 12000L,
-                readyJs = "h.includes('dataLink')&&h.includes('POW_CHALLENGE')&&h.includes('POW_SALT')"
+                readyJs = if (playerHtml.contains("EMBED69", true)) {
+                    "h.includes('dood')&&h.includes('vidhide')&&h.includes('streamwish')"
+                } else {
+                    "h.includes('dataLink')&&h.includes('POW_CHALLENGE')&&h.includes('POW_SALT')"
+                },
+                renderInIframe = playerHtml.contains("EMBED69", true)
             )
             if (!renderedHtml.isNullOrBlank()) {
                 val renderedMatch = extractDataLink(renderedHtml)
@@ -473,6 +495,21 @@ class SerieskaoProvider : MainAPI() {
                 if (renderedMatch != null) {
                     playerHtml = renderedHtml
                     rawMatch = renderedMatch
+                } else if (playerHtml.contains("EMBED69", true)) {
+                    val serverUrls = findPlayerServerUrls(renderedHtml)
+                    Log.d(TAG, "loadLinks Embed69 servidores WebView=${serverUrls.size}: $serverUrls")
+                    if (serverUrls.isNotEmpty()) {
+                        serverUrls.amap { serverUrl ->
+                            loadKaoSourceExtractor(
+                                "Embed69",
+                                fixHostsLinksPreservingVidHide(serverUrl),
+                                playerUrl,
+                                subtitleCallback,
+                                emitTracked,
+                            )
+                        }
+                        return@coroutineScope true
+                    }
                 }
             } else {
                 Log.w(TAG, "loadLinks player WebView sin HTML")
