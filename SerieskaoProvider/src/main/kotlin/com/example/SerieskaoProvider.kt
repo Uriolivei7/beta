@@ -69,7 +69,8 @@ class SerieskaoProvider : MainAPI() {
                 cdnPaths.any { url.contains(it, ignoreCase = true) }
             if (!isCdn) return@Interceptor chain.proceed(request)
 
-            Log.d(TAG, "[intercept] CDN request: ${url.take(120)}")
+            val requestPath = request.url.encodedPath
+            Log.d(TAG, "[intercept] CDN request: ${request.url.host}$requestPath")
             val newRequest = request.newBuilder()
                 .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36")
                 .header("Referer", extractorLink.referer)
@@ -77,12 +78,30 @@ class SerieskaoProvider : MainAPI() {
                 .header("Accept", "*/*")
                 .header("Accept-Language", "en-US,en;q=0.9")
                 .build()
-            val response = chain
-                .withConnectTimeout(30, TimeUnit.SECONDS)
-                .withReadTimeout(30, TimeUnit.SECONDS)
-                .proceed(newRequest)
-            Log.d(TAG, "[intercept] CDN response: ${response.code} ${response.header("content-type","?")} url=${url.take(100)}")
-            response
+            try {
+                val response = chain
+                    .withConnectTimeout(30, TimeUnit.SECONDS)
+                    .withReadTimeout(30, TimeUnit.SECONDS)
+                    .proceed(newRequest)
+                val contentType = response.header("content-type", "?")
+                Log.d(TAG, "[intercept] CDN response: ${response.code} $contentType url=${request.url.host}$requestPath")
+                if (requestPath.endsWith(".m3u8", ignoreCase = true)) {
+                    val body = runCatching { response.peekBody(64 * 1024L).string() }.getOrDefault("")
+                    val playlistLines = body.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.take(8).map { line ->
+                        if (line.startsWith("http://") || line.startsWith("https://") || line.startsWith("/")) {
+                            val uri = runCatching { java.net.URL(java.net.URL(url), line).toURI() }.getOrNull()
+                            "URI=${uri?.host ?: "?"}${uri?.rawPath ?: line.substringBefore('?')}"
+                        } else {
+                            line.take(100)
+                        }
+                    }.toList()
+                    Log.d(TAG, "[intercept] HLS playlist path=$requestPath bytes=${body.length} lines=$playlistLines")
+                }
+                response
+            } catch (t: Throwable) {
+                Log.e(TAG, "[intercept] CDN network failure ${t::class.simpleName} host=${request.url.host} path=$requestPath")
+                throw t
+            }
         }
     }
 

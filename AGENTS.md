@@ -989,6 +989,12 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - Versiones a **41** en `SeriesKaoProvider/build.gradle.kts` y `plugins.json`; `fileSize` pendiente. Gradle no ejecutado. Comando: ` .\gradlew.bat :SeriesKaoProvider:make --console=plain -q`.
 - ⏸️ Pendiente probar Titán T1E1 en dispositivo; buscar `iframe=true`, `Embed69 servidores WebView=N` y emisiones de links. Luego retomar el error hls4 de VidHide.
 
+## SeriesKao — diagnóstico seguro de fallos HLS (3 Nov 2026 v42)
+- Los logs comparativos muestran que HLS4 de Titán y Chapulín llega a HTTP 200 para master e index; el error 2004 de Chapulín ocurre después de esas respuestas y cada episodio tiene rutas/segmentos distintos.
+- El interceptor ahora registra para `.m3u8` el estado, tipo, tamaño aproximado y primeras líneas de la playlist; las URLs se reducen a host/path sin query token. También captura fallos de red con clase de excepción y host/path antes de relanzarlos.
+- Versiones a **42** en `SeriesKaoProvider/build.gradle.kts` y `plugins.json`; `fileSize` pendiente. Gradle no ejecutado. Comando: ` .\gradlew.bat :SeriesKaoProvider:make --console=plain -q`.
+- ⏸️ Pendiente compilar, seleccionar VidHide hls4 de Chapulín T1E3 y compartir `[intercept] HLS playlist`, cualquier `CDN network failure` y `playerError`. Esos datos identificarán si el index anuncia segmentos, si sus rutas fallan o si ExoPlayer rechaza el contenido. Titán ya resuelve los tres servidores en v41.
+
 ## OkruProvider — normalizar source y contar callbacks (31 Oct 2026 v6)
 - **Log del usuario**: la búsqueda y carga del video OK; `OkRuExtractor -> isFound=true` tras ~12 s, pero el player no mostraba los enlaces.
 - **Hallazgo de código**: `isFound=true` solo se establecía dentro del callback, así que el extractor sí emitió al menos un link. El extractor construye esos links con `source=OkRU`/`OkRu`, pero el MainAPI registrado se llama `OKRU`; el provider entregaba el link del extractor sin normalizar `source`. Es un desajuste real que puede impedir asociar/reproducir el enlace desde el MainAPI.
