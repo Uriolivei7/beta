@@ -7,8 +7,9 @@ import android.content.Context
 @CloudstreamPlugin
 class LacartoonsPlugin: Plugin() {
     override fun load(context: Context) {
-        // All providers should be added in this manner. Please don't edit the providers list directly.
+
         registerMainAPI(LacartoonsProvider())
+        Cubeembed.pluginContext = context.applicationContext
         registerExtractorAPI(Cubeembed())
         registerExtractorAPI(Sendvid())
     }

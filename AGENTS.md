@@ -1,5 +1,23 @@
 # AGENTS.md - Netmirror Plugin Development
 
+## LacartoonsProvider — sincronizar versión del catálogo (5 Nov 2026 v21)
+- La web pública muestra la ficha de El Chavo del 8 y sus episodios (incluido el capítulo 1 de temporada 1); el catálogo del repo estaba desincronizado: `LacartoonsProvider/build.gradle.kts` declaraba versión 21, mientras `plugins.json` ofrecía versión 1. El usuario podía seguir recibiendo el plugin viejo y ver “enlaces no encontrados” aunque el código reciente estuviera en el repo.
+- **Fix**: sincronizar `plugins.json` a versión 21. El `fileSize` sigue siendo 15000 y debe actualizarse al publicar el `.cs3` generado.
+- **Compilación**: no ejecutada por regla del repo. Comando: ` .\gradlew.bat :LacartoonsProvider:make --console=plain -q`.
+- **Pendiente en dispositivo**: actualizar/reinstalar Lacartoons v21 y probar un episodio de El Chavo del Ocho. Si aún da “enlaces no encontrados”, compartir logs desde `loadLinks called` hasta `loadLinks returning`, porque no hay logs de esa ejecución en el reporte actual para atribuir un fallo restante al selector de iframe o al extractor.
+
+## LacartoonsProvider — contar enlaces emitidos y diagnosticar Cubeembed (5 Nov 2026 v22)
+- **Log del usuario, El Chavo del 8 T4E4**: iframe `https://cubeembed.rpmvid.com/#hsd9i`; `loadExtractor` devuelve `true`, pero CS3 muestra “enlaces no encontrados”. `loadExtractor` indica que reconoció el extractor, no que su callback entregó links; el proveedor confundía ambos estados.
+- **Fix**: envolver el callback de `loadExtractor`, contar solo enlaces realmente emitidos y devolver `true` únicamente si el contador es mayor que cero. Cubeembed registra ahora HTTP/content-type/tamaño, presencia de cada campo de stream y si emitió links; se deja de imprimir el payload descifrado completo.
+- Versiones a **22** en `LacartoonsProvider/build.gradle.kts` y `plugins.json`; `fileSize` pendiente de actualizar al publicar el artefacto. Gradle no ejecutado por regla del repo. Comando: ` .\gradlew.bat :LacartoonsProvider:make --console=plain -q`.
+- **Pendiente en dispositivo**: instalar v22 y volver a probar ese capítulo. Revisar logs `Cubeembed` y `emitted=`. Si la API descifra pero ambos campos salen falsos, el formato del endpoint cambió y esos logs permitirán ajustar el parser con evidencia.
+
+## LacartoonsProvider — fallback TurboEmbed para Cubeembed (5 Nov 2026 v23)
+- **Evidencia del usuario**: `cubeembed.rpmvid.com/#hsd9i` termina en `https://turboembed.com/alb2`; el player usa JWPlayer y el video DOM aparece como `blob:`. El bundle actual consulta `/api/stream?s=alb2` (metadata solamente) y luego obtiene la config de reproducción por `/api/view` cifrado. El endpoint heredado `/api/v1/video?id=...` no corresponde al flujo actual.
+- **Fix**: Cubeembed abre el iframe original en WebView, pulsa el overlay del reproductor y consulta `jwplayer('media-player').getPlaylistItem().file` hasta hallar la URL HTTP fuente; si no la obtiene, conserva el extractor API legado como fallback. El contexto del plugin se guarda al inicializarse. `loadLinks` ahora cuenta links entregados al callback, no el booleano de reconocimiento del extractor.
+- Versiones a **23** en `LacartoonsProvider/build.gradle.kts` y `plugins.json`; `fileSize` pendiente de actualizar al publicar. Gradle no ejecutado por regla del repo. Comando: ` .\gradlew.bat :LacartoonsProvider:make --console=plain -q`.
+- **Pendiente en dispositivo**: instalar v23 y probar el episodio `https://www.lacartoons.com/serie/capitulo/30004?t=4`. Buscar `TurboEmbed loaded`, `TurboEmbed JW source encontrado`, `emitted=` y `loadLinks returning`. Si falla, esos logs mostrarán si la navegación llegó a `/alb2` y si JWPlayer publicó su playlist.
+
 ## TvguatemalaProvider — Normalización de títulos (31 Oct 2026 v2)
 - El detalle mostraba títulos SEO largos, como “Canal 3 Guatemala En Vivo Gratis 24/7 | Ver TV Online | TV Guatemala En Vivo”; el título SEO de El Chavo también incluía promoción y marca del sitio.
 - Añadida `cleanChannelTitle()` para cortar el texto tras `|`, quitar sufijos promocionales y eliminar “TV Guatemala”. Se aplica en home, búsqueda, detalle y nombre del enlace reproducido.
@@ -999,7 +1017,9 @@ Sitio: `anime.uniquestream.net` (Nuxt). Provider en `UniquestreamProvider/src/ma
 - **Logs v42 de Chapulín T1E1**: el master e index de VidHide HLS4 responden HTTP 200. La playlist anuncia como primer segmento una URL de `redirector.cdnsync.cloud`, host que no estaba en `cdnDomains`, por lo que la solicitud no pasaba por el interceptor ni quedaba registrada. StreamWish también muestra una URI en `tiktokcdn.com` (posible publicidad/segmento inyectado), dato separado del link VidHide.
 - **Cambio v43**: añadir `cdnsync.cloud` a `cdnDomains`, para registrar las respuestas de los segmentos del redirector y aplicar UA/Referer/Origin y los timeouts extendidos. Se preserva el `Origin` original del mirror.
 - Versiones a **43** en `SeriesKaoProvider/build.gradle.kts` y `plugins.json`; `fileSize` pendiente. Gradle no ejecutado. Comando: ` .\gradlew.bat :SeriesKaoProvider:make --console=plain -q`.
-- ⏸️ Pendiente probar Chapulín T1E1 con HLS4 y revisar `[intercept] CDN request/response` para `redirector.cdnsync.cloud`, además del `playerError`. El status y tipo de contenido del redirector confirmarán si esa ruta explica el 2004.
+- **Resultado confirmado en dispositivo (logs 3 Nov 2026)**: master e index de HLS4 responden 200, pero el index apunta a `redirector.cdnsync.cloud/`; el interceptor registra cuatro respuestas consecutivas **522 text/html** para ese segmento. Esa respuesta HTTP fallida causa `ERROR_CODE_IO_BAD_HTTP_STATUS (2004)`. La extracción del enlace y los headers sí funcionan hasta llegar al segmento; el contenido del redirector está caído o inaccesible para este episodio.
+- **Conclusión**: el hls4 de Titán y el de Chapulín son rutas de segmentos distintas; que Titán reproduzca no garantiza que la ruta de Chapulín esté disponible. Para Chapulín T1E1, usar VOE o StreamWish, que sí entregan alternativas reproducibles. El 522 es upstream y no se corrige cambiando el parser del plugin.
+- Versiones a **43** en `SeriesKaoProvider/build.gradle.kts` y `plugins.json`; `fileSize` pendiente. Gradle no ejecutado. Comando: ` .\gradlew.bat :SeriesKaoProvider:make --console=plain -q`.
 
 ## OkruProvider — normalizar source y contar callbacks (31 Oct 2026 v6)
 - **Log del usuario**: la búsqueda y carga del video OK; `OkRuExtractor -> isFound=true` tras ~12 s, pero el player no mostraba los enlaces.

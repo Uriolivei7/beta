@@ -122,7 +122,7 @@ class LacartoonsProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         Log.d("LACartoonsProvider", "loadLinks called for: $data")
-        var linksFound = false
+        var emittedLinks = 0
         val res = app.get(data).document
         val iframes = res.select(".serie-video-informacion iframe")
         Log.d("LACartoonsProvider", "Found ${iframes.size} iframe(s) on the page")
@@ -149,19 +149,21 @@ class LacartoonsProvider : MainAPI() {
                 Log.d("LACartoonsProvider", "[#$index] fixHostsLinks applied → $finalLink")
             }
 
-            val success = try {
-                loadExtractor(finalLink, data, subtitleCallback, callback)
+            val extractorMatched = try {
+                loadExtractor(finalLink, data, subtitleCallback) { link ->
+                    emittedLinks++
+                    Log.d("LACartoonsProvider", "[#$index] emitted link #$emittedLinks name='${link.name}' type=${link.type} quality=${link.quality}")
+                    callback(link)
+                }
             } catch (e: Exception) {
                 Log.e("LACartoonsProvider", "[#$index] loadExtractor threw exception for $finalLink: ${e::class.simpleName}: ${e.message}")
                 false
             }
-            Log.d("LACartoonsProvider", "[#$index] loadExtractor($finalLink) returned: $success")
-            if (success) {
-                linksFound = true
-            }
+            Log.d("LACartoonsProvider", "[#$index] loadExtractor matched=$extractorMatched emitted=${emittedLinks}")
         }
 
-        Log.d("LACartoonsProvider", "loadLinks returning: $linksFound (${if (linksFound) "links found" else "NO links found"})")
+        val linksFound = emittedLinks > 0
+        Log.d("LACartoonsProvider", "loadLinks returning: $linksFound (emitted=$emittedLinks)")
         return linksFound
     }
 }
