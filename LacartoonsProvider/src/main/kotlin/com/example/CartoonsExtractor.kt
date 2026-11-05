@@ -36,7 +36,7 @@ import javax.crypto.Cipher
 import javax.crypto.spec.IvParameterSpec
 import javax.crypto.spec.SecretKeySpec
 
-class Cubeembed : ExtractorApi() {
+open class Cubeembed : ExtractorApi() {
     override var name = "Cubeembed"
     override var mainUrl = "https://cubeembed.rpmvid.com"
     override val requiresReferer = true
@@ -51,15 +51,17 @@ class Cubeembed : ExtractorApi() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ) {
+        Log.d("Cubeembed", "resolve start host=${try { URL(url).host } catch (_: Exception) { "unknown" }}")
         val turboResult = resolveTurboEmbed(url)
         if (turboResult != null && turboResult.streamUrl.isNotBlank()) {
-            Log.d("Cubeembed", "TurboEmbed JW source encontrado")
+            Log.d("Cubeembed", "TurboEmbed JW source found host=${try { URL(turboResult.streamUrl).host } catch (_: Exception) { "unknown" }}")
             callback(newExtractorLink(this.name, "$name [TurboEmbed]", turboResult.streamUrl, ExtractorLinkType.M3U8) {
                 this.referer = turboResult.pageUrl
                 this.quality = Qualities.Unknown.value
             })
             return
         }
+        Log.w("Cubeembed", "TurboEmbed WebView terminó sin fuente JW; intento extractor API legado")
 
         val hash = url.substringAfterLast("#").substringAfter("/")
         val baseUrl = getBaseUrl(url)
@@ -68,7 +70,7 @@ class Cubeembed : ExtractorApi() {
         val headers = mapOf("User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0")
         val apiResponse = app.get("$baseUrl/api/v1/video?id=$hash", headers = headers)
         val encrypted = apiResponse.text.trim()
-        Log.d("Cubeembed", "API HTTP ${apiResponse.code} contentType=${apiResponse.headers["content-type"]} responseLength=${encrypted.length}")
+        Log.d("Cubeembed", "Legacy API HTTP ${apiResponse.code} contentType=${apiResponse.headers["content-type"]} responseLength=${encrypted.length}")
         if (encrypted.isEmpty()) {
             Log.w("Cubeembed", "API devolvió cuerpo vacío para id=$hash")
             return
@@ -178,7 +180,12 @@ class Cubeembed : ExtractorApi() {
                     }, "NativeBridge")
                     webView.webViewClient = object : WebViewClient() {
                         override fun onPageFinished(view: WebView?, currentUrl: String?) {
-                            Log.d("Cubeembed", "TurboEmbed loaded: " + currentUrl)
+                            val safePage = try {
+                                URL(currentUrl ?: "").let { it.host + it.path }
+                            } catch (_: Exception) {
+                                "unknown"
+                            }
+                            Log.d("Cubeembed", "TurboEmbed page loaded: " + safePage)
                             handler.postDelayed({ poll() }, 500L)
                         }
                     }
@@ -220,6 +227,11 @@ class Cubeembed : ExtractorApi() {
         check(hex.length % 2 == 0) { "Hex string must have an even length" }
         return hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
     }
+}
+
+class Turboembed : Cubeembed() {
+    override var name = "TurboEmbed"
+    override var mainUrl = "https://turboembed.com"
 }
 
 private data class TurboEmbedResolved(val pageUrl: String, val streamUrl: String)

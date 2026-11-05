@@ -11,6 +11,7 @@ class LacartoonsPlugin: Plugin() {
         registerMainAPI(LacartoonsProvider())
         Cubeembed.pluginContext = context.applicationContext
         registerExtractorAPI(Cubeembed())
+        registerExtractorAPI(Turboembed())
         registerExtractorAPI(Sendvid())
     }
 }

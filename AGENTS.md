@@ -18,6 +18,21 @@
 - Versiones a **23** en `LacartoonsProvider/build.gradle.kts` y `plugins.json`; `fileSize` pendiente de actualizar al publicar. Gradle no ejecutado por regla del repo. Comando: ` .\gradlew.bat :LacartoonsProvider:make --console=plain -q`.
 - **Pendiente en dispositivo**: instalar v23 y probar el episodio `https://www.lacartoons.com/serie/capitulo/30004?t=4`. Buscar `TurboEmbed loaded`, `TurboEmbed JW source encontrado`, `emitted=` y `loadLinks returning`. Si falla, esos logs mostrarán si la navegación llegó a `/alb2` y si JWPlayer publicó su playlist.
 
+## LacartoonsProvider — diagnóstico genérico por iframe/extractor (5 Nov 2026 v24)
+- **Pedido**: disponer de logs reutilizables para diagnosticar futuros fallos con cualquier servidor/extractor.
+- **Cambios**: registrar estado/tamaño de la página; URL iframe reducida a host+path (sin query ni fragmento); por iframe, host, si hubo extractor, número de callbacks, duración y advertencias distintas para “sin extractor” y “extractor sin links”. Las excepciones incluyen tipo y mensaje. Cubeembed registra etapas de WebView y API sin imprimir URL de stream firmadas.
+- Versiones a **24** en `LacartoonsProvider/build.gradle.kts` y `plugins.json`; `fileSize` pendiente. Gradle no ejecutado. Comando: ` .\gradlew.bat :LacartoonsProvider:make --console=plain -q`.
+- **Pendiente en dispositivo**: instalar v24 y probar un episodio de El Chavo; revisar `extractor result`, `no extractor matched`, `extractor matched but emitted no links` y, para Cubeembed, `TurboEmbed page loaded`/`JW source found`.
+
+## LacartoonsProvider — registrar TurboEmbed directo (5 Nov 2026 v25)
+- **Dato nuevo del usuario**: otro video usa la ruta directa `https://turboembed.com/3t08`, mismo player que el iframe de Cubeembed que redirige a `/alb2`.
+- **Causa de cobertura**: `loadExtractor` solo tenía registrado `cubeembed.rpmvid.com`; si la página de episodio entrega directamente un enlace `turboembed.com`, ningún extractor lo reconocía y no llegaba al fallback WebView.
+- **Fix**: registrar `Turboembed` como segunda entrada del mismo extractor compartido, con `mainUrl=https://turboembed.com`. El resolver usa la URL recibida completa y no tiene IDs/rutas hardcodeadas, por lo que sirve para `/3t08`, `/alb2` y otras rutas del player.
+- Versiones a **25** en `LacartoonsProvider/build.gradle.kts` y `plugins.json`; `fileSize` pendiente. Gradle no ejecutado. Comando: ` .\gradlew.bat :LacartoonsProvider:make --console=plain -q`.
+- **Logs posteriores del usuario**: Cubeembed `#hsd9i` y `#qlwif` emiten 1 link cada uno; Liga de la Justicia T1E1 `#w5cm8` lo reconoce (`loadExtractor matched=true`) pero emite 0. Esto localiza el fallo dentro del recorrido Cubeembed/TurboEmbed de ese video, no en el parseo de iframes de LaCartoons. No hay log de `Cubeembed` en el paste para saber si la redirección llegó al player o si JWPlayer no expuso la playlist.
+- El resolver es dinámico y no depende de esos IDs; rutas como `/alb2`, `/3t08` o `/4d07` se abren con la misma lógica. El caso `#w5cm8` demuestra que una ruta individual puede no entregar una fuente aunque otras sí funcionen.
+- **Pendiente**: reproducir Liga de la Justicia con v25 y compartir logs `Cubeembed` + `LACartoonsProvider` sin filtrar tags. Confirmar tanto `TurboEmbed page loaded` y `TurboEmbed JW source found` como `extractor result`/`emitted`.
+
 ## TvguatemalaProvider — Normalización de títulos (31 Oct 2026 v2)
 - El detalle mostraba títulos SEO largos, como “Canal 3 Guatemala En Vivo Gratis 24/7 | Ver TV Online | TV Guatemala En Vivo”; el título SEO de El Chavo también incluía promoción y marca del sitio.
 - Añadida `cleanChannelTitle()` para cortar el texto tras `|`, quitar sufijos promocionales y eliminar “TV Guatemala”. Se aplica en home, búsqueda, detalle y nombre del enlace reproducido.
