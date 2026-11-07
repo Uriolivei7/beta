@@ -25,6 +25,16 @@ class ElChavo8TVProvider : MainAPI() {
     override val hasMainPage = true
     override val hasDownloadSupport = true
 
+    init {
+        Log.d(TAG, "ElChavo8TVProvider constructor llamado")
+        Log.d(TAG, "mainUrl=$mainUrl")
+        Log.d(TAG, "name=$name")
+        Log.d(TAG, "lang=$lang")
+        Log.d(TAG, "supportedTypes=$supportedTypes")
+        Log.d(TAG, "hasMainPage=$hasMainPage")
+        Log.d(TAG, "hasDownloadSupport=$hasDownloadSupport")
+    }
+
     private val browserHeaders = mapOf(
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36",
         "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
@@ -48,20 +58,26 @@ class ElChavo8TVProvider : MainAPI() {
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val t0 = System.currentTimeMillis()
+        Log.d(TAG, "getMainPage llamado: page=$page request.data='${request.data}'")
         val path = request.data
         val doc = try {
+            Log.d(TAG, "getMainPage fetching: $mainUrl/$path")
             app.get("$mainUrl/$path", headers = browserHeaders, timeout = 60L).document
         } catch (e: Exception) {
             if (e is CancellationException) throw e
-            Log.d(TAG, "getMainPage $path falló: ${e.message}")
+            Log.w(TAG, "getMainPage $path falló: ${e.message}")
             return null
         }
+
+        Log.d(TAG, "getMainPage documento obtenido, length=${doc.body()?.text()?.length ?: 0}")
 
         val homeLists = mutableListOf<HomePageList>()
 
         val seasonLinks = doc.select("a[href*='temporada-'], a[href*=/temporada/]")
             .map { it.attr("abs:href") }
             .distinct()
+
+        Log.d(TAG, "getMainPage seasonLinks encontrados: ${seasonLinks.size} -> $seasonLinks")
 
         if (seasonLinks.isNotEmpty()) {
             for (seasonUrl in seasonLinks) {
@@ -71,6 +87,7 @@ class ElChavo8TVProvider : MainAPI() {
                     this.posterUrl = null
                 })
                 homeLists.add(HomePageList(seasonName, list))
+                Log.d(TAG, "getMainPage agregó fila: $seasonName -> $seasonUrl")
             }
         } else {
             val pageTitle = doc.selectFirst("h1")?.text()?.trim() ?: path
@@ -79,6 +96,7 @@ class ElChavo8TVProvider : MainAPI() {
                 this.posterUrl = null
             })
             homeLists.add(HomePageList(pageTitle, list))
+            Log.d(TAG, "getMainPage agregó fila fallback: $pageTitle")
         }
 
         Log.d(TAG, "getMainPage $path -> ${homeLists.size} filas ${System.currentTimeMillis() - t0}ms")
