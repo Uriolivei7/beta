@@ -317,7 +317,7 @@ class VeranimeProvider : MainAPI() {
             .replaceFirst("https://uqload.io", "https://uqload.cx")
             .replaceFirst("https://uqload.is", "https://uqload.cx")
             .replaceFirst("https://uqload.vc", "https://uqload.cx")
-            .replaceFirst("https://uqload.com", "https://uqload.cx")
+            .replaceFirst("https://uqload.com", "https://uqload.com")
             .replaceFirst("https://lulu.st", "https://lulustream.com")
             .replaceFirst("https://do7go.com", "https://dood.la")
             .replaceFirst("https://dood.sh", "https://playmogo.com")
