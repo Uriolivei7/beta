@@ -483,7 +483,7 @@ class SerieskaoProvider : MainAPI() {
                 "streamwish", "hglink", "swdyu", "cybervynx", "dumbalag", "awish",
                 "voe.sx", "voe", "voe2", "shannoncoldalready.com", "shannoncoldalready"
             )
-            // URLs absolutas
+
             val absoluteUrls = Regex("""(?i)(?:https?:)?//[^\s'"<>\\]+""").findAll(normalized)
                 .mapNotNull { match ->
                     val candidate = match.value.trimEnd(')', ',', ';', '.')
@@ -493,7 +493,7 @@ class SerieskaoProvider : MainAPI() {
                 }
                 .distinct()
                 .toList()
-            // URLs relativas tipo /e/XXXX que contengan 'voe' (Voe suele usar rutas relativas)
+
             val relativeUrls = Regex("""(?i)/e/[A-Za-z0-9_-]+""").findAll(normalized)
                 .mapNotNull { match ->
                     val candidate = match.value.trimEnd(')', ',', ';', '.')

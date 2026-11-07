@@ -34,7 +34,6 @@ import java.util.concurrent.TimeUnit
 
 private const val TAG = "VerAnime"
 
-
 class VeranimeProvider : MainAPI() {
     companion object {
         var pluginContext: Context? = null
@@ -44,7 +43,7 @@ class VeranimeProvider : MainAPI() {
 
     override var mainUrl = "https://veranime.ninja"
     override var name = "AnimeNINJA"
-    override var lang = "mx"
+    override var lang = "es"
     override val hasMainPage = true
     override val hasDownloadSupport = true
     override val supportedTypes = setOf(TvType.Anime)
@@ -187,7 +186,6 @@ class VeranimeProvider : MainAPI() {
         }
     }
 
-
     private fun matchesQuery(title: String, query: String): Boolean {
         val norm = title.lowercase()
         val tokens = query.lowercase().split(Regex("\\s+")).filter { it.length >= 2 }
@@ -205,14 +203,12 @@ class VeranimeProvider : MainAPI() {
         val t0 = System.currentTimeMillis()
         Log.d(TAG, "load($url)")
         val doc = try {
-
             app.get(url, headers = browserHeaders, timeout = 120L).document
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             Log.w(TAG, "load página falló: ${e.message}")
             return null
         }
-
 
         if ("/ver/" in url && "-episodio-" in url) {
             val epTitle = doc.selectFirst("h1")?.text()?.trim()?.takeIf { !it.isNullOrEmpty() }
@@ -459,19 +455,33 @@ class VeranimeProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         val t0 = System.currentTimeMillis()
-        val pageUrl = data.substringBefore("?")
-        Log.d(TAG, "loadLinks data='$data' -> pagina $pageUrl")
-        val doc = try {
-            app.get(pageUrl, headers = browserHeaders + ("Referer" to mainUrl), timeout = 120L).document
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            Log.w(TAG, "loadLinks pagina no disponible: ${e.message}")
+        Log.d(TAG, "loadLinks data='$data'")
+        val u = data.trim()
+        if (u.isBlank()) {
+            Log.e(TAG, "loadLinks: data vacía")
             return false
         }
 
+        // Paso 1: Obtener la página del episodio
+        val pageUrl = u.substringBefore("?")
+        val doc = try {
+            app.get(u, headers = browserHeaders + ("Referer" to mainUrl), timeout = 120L).document
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Log.e(TAG, "loadLinks página no disponible: ${e.message}")
+            return false
+        }
+
+        // Paso 2: Obtener las opciones de servidor (botones)
         val options = doc.select("li.dooplay_player_option")
         Log.d(TAG, "loadLinks opciones=${options.size}")
+        if (options.isEmpty()) {
+            Log.w(TAG, "loadLinks: no se encontraron opciones de servidor")
+            return false
+        }
+
         var found = false
+
         for (opt in options) {
             val post = opt.attr("data-post").trim()
             val nume = opt.attr("data-nume").trim()
@@ -481,12 +491,19 @@ class VeranimeProvider : MainAPI() {
                 Log.w(TAG, "opción sin ids: $optTitle")
                 continue
             }
+
+            Log.d(TAG, "procesando opción: $optTitle (post=$post, nume=$nume, type=$type)")
+
+            // Paso 3: Hacer AJAX para obtener embed URL
             val embedUrl = dooPlayerAjax(pageUrl, post, nume, type)
             if (embedUrl.isNullOrBlank()) {
                 Log.w(TAG, "sin embed para $optTitle")
                 continue
             }
 
+            Log.d(TAG, "loadLinks embed URL: $embedUrl")
+
+            // Paso 4: Obtener HTML del embed
             val hub = try {
                 app.get(embedUrl, headers = browserHeaders + ("Referer" to pageUrl), timeout = 60L).text
             } catch (e: Exception) {
@@ -495,36 +512,56 @@ class VeranimeProvider : MainAPI() {
                 continue
             }
 
-            if ("OD_SUB" in hub || "OD_LAT" in hub || "OD_ES" in hub) {
-                if (emitSaidochesto(hub, embedUrl, optTitle, subtitleCallback, callback)) found = true
-            } else if (!emitCyberlockerJson(hub, embedUrl, optTitle, subtitleCallback, callback)) {
+            if (hub.isEmpty()) {
+                Log.w(TAG, "HTML del embed vacío para $optTitle")
+                continue
+            }
 
-                var hubFound = false
-                Regex("""https?://[^"'\s\\]+\.m3u8[^"'\s\\]*""").findAll(hub)
-                    .map { it.value }.distinct().forEach { u ->
-                        callback(newExtractorLink(name, "$optTitle HLS", u, ExtractorLinkType.M3U8) {
-                            this.referer = embedUrl
-                            this.quality = Qualities.Unknown.value
-                        })
-                        hubFound = true
-                    }
-                if (!hubFound) {
-                    val iframes = Jsoup.parse(hub, embedUrl).select("iframe[src]")
-                    Log.d(TAG, "hub genérico: ${iframes.size} iframes")
-                    for (frame in iframes) {
-                        val src = frame.attr("abs:src").trim()
-                        if (src.isBlank()) continue
-                        if (loadExtractorCollect(fixMirrorHost(src), embedUrl, subtitleCallback, callback, "$optTitle Mirror")) {
-                            hubFound = true
-                        }
-                    }
+            // Paso 5: Procesar según el tipo de servidor
+            // Intento A: Si el hub tiene datos OD (saidochesto), usar esa ruta
+            if ("OD_SUB" in hub || "OD_LAT" in hub || "OD_ES" in hub) {
+                Log.d(TAG, "usando rama saidochesto para $optTitle")
+                if (emitSaidochesto(hub, embedUrl, optTitle, subtitleCallback, callback)) {
+                    Log.d(TAG, "enlace encontrado vía saidochesto para $optTitle")
+                    found = true
                 }
-                if (hubFound) found = true
-                else Log.w(TAG, "hub sin mirrors conocidos: ${embedUrl.take(80)}")
-            } else {
-                found = true
+                continue
+            }
+
+            // Intento 2: Buscar enlaces directos .m3u8/.mp4 en el HTML del hub
+            val directLinks = mutableListOf<String>()
+            Regex("""https?://[^"'\s<>]+\.m3u8[^"'\s<>]*""").findAll(hub).forEach { m ->
+                val candidate = m.value.trimEnd(')', ',', ';', '.')
+                val url = if (candidate.startsWith("//")) "https:$candidate" else candidate
+                val host = runCatching { java.net.URL(url).host.lowercase() }.getOrDefault("")
+                if (host != "serieskao.top" && host != "embed69.org") {
+                    directLinks.add(candidate)
+                    Log.d(TAG, "enlace directo encontrado: $candidate")
+                    callback(newExtractorLink(name, "$optTitle [Directo]", candidate, ExtractorLinkType.M3U8) {
+                        this.referer = embedUrl
+                        this.quality = Qualities.Unknown.value
+                    })
+                    found = true
+                }
+            }
+            if (found) continue
+
+            // Intento 3: Buscar iframes en el HTML del hub
+            val iframes = Jsoup.parse(hub, embedUrl).select("iframe[src]")
+            Log.d(TAG, "hub genérico: ${iframes.size} iframes")
+            for (frame in iframes) {
+                val src = frame.attr("abs:src").trim()
+                if (src.isBlank()) continue
+                if (loadExtractorCollect(fixMirrorHost(src), embedUrl, subtitleCallback, callback, "$optTitle Mirror")) {
+                    found = true
+                }
+            }
+
+            if (!found) {
+                Log.w(TAG, "hub sin enlaces para $optTitle")
             }
         }
+
         Log.d(TAG, "loadLinks $pageUrl -> ${if (found) "OK" else "SIN LINKS"} ${System.currentTimeMillis() - t0}ms")
         return found
     }
@@ -545,7 +582,7 @@ class VeranimeProvider : MainAPI() {
         )
         for ((block, langLabel) in langs) {
             val blockHtml = Regex("<div class=\"OD $block[^\"]*\">(.*?)</div>\\s*</div>", RegexOption.DOT_MATCHES_ALL)
-                .find(hub)?.groupValues?.getOrNull(1) ?: continue
+                .find(hub)?.groupValues?.get(1) ?: continue
             val mirrors = Regex("go_to_player\\('([^']+)'\\)").findAll(blockHtml)
                 .map { it.groupValues[1] }.distinct().toList()
             Log.d(TAG, "hub $langLabel: ${mirrors.size} mirrors")
@@ -575,6 +612,12 @@ class VeranimeProvider : MainAPI() {
             })
             Log.d(TAG, "hub playlist directa -> $label")
             return true
+        }
+        if (fixed.contains("filemoon", ignoreCase = true) || fixed.contains("byse", ignoreCase = true)) {
+            if (emitByse(fixed, embedUrl, subtitleCallback, callback, label)) return true
+            if (loadExtractorCollect(fixed, embedUrl, subtitleCallback, callback, label)) return true
+            Log.w(TAG, "sin links para $label (${fixed.take(80)})")
+            return false
         }
         if (loadExtractorCollect(fixed, embedUrl, subtitleCallback, callback, label)) return true
         if (fixed.contains("streamwish", ignoreCase = true)) {
@@ -618,42 +661,40 @@ class VeranimeProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit,
     ): Boolean {
-            val langRaw = m.groupValues[3]
-            val langLabel = when {
-                langRaw.contains("lat", ignoreCase = true) -> "Latino"
-                langRaw.contains("cast", ignoreCase = true) -> "Castellano"
-                langRaw.equals("español", ignoreCase = true) -> "Castellano"
-                langRaw.contains("jap", ignoreCase = true) -> "Subtitulado"
-                else -> langRaw
-            }
-            val fixed = fixMirrorHost(m.groupValues[2])
-            val label = "$optTitle $langLabel [${m.groupValues[1]}]"
-            val isPlaylist = fixed.contains(".m3u8") || fixed.contains("/m3u8/")
-            if (isPlaylist) {
-                callback(newExtractorLink(name, label, fixed, ExtractorLinkType.M3U8) {
-                    this.referer = embedUrl
-                    this.headers = if (fixed.contains("zilla-networks.com")) zillaHeaders else browserHeaders + ("Referer" to embedUrl)
-                    this.quality = Qualities.Unknown.value
-                })
-                Log.d(TAG, "hub playlist directa -> $label")
-                return true
-            }
-            if (fixed.contains("filemoon", ignoreCase = true) || fixed.contains("byse", ignoreCase = true)) {
-                
-                if (emitByse(fixed, embedUrl, subtitleCallback, callback, label)) return true
-                if (loadExtractorCollect(fixed, embedUrl, subtitleCallback, callback, label)) return true
-                Log.w(TAG, "sin links para $label (${fixed.take(80)})")
-                return false
-            }
+        val langRaw = m.groupValues[3]
+        val langLabel = when {
+            langRaw.contains("lat", ignoreCase = true) -> "Latino"
+            langRaw.contains("cast", ignoreCase = true) -> "Castellano"
+            langRaw.equals("español", ignoreCase = true) -> "Castellano"
+            langRaw.contains("jap", ignoreCase = true) -> "Subtitulado"
+            else -> langRaw
+        }
+        val fixed = fixMirrorHost(m.groupValues[2])
+        val label = "$optTitle $langLabel [${m.groupValues[1]}]"
+        val isPlaylist = fixed.contains(".m3u8") || fixed.contains("/m3u8/")
+        if (isPlaylist) {
+            callback(newExtractorLink(name, label, fixed, ExtractorLinkType.M3U8) {
+                this.referer = embedUrl
+                this.headers = if (fixed.contains("zilla-networks.com")) zillaHeaders else browserHeaders + ("Referer" to embedUrl)
+                this.quality = Qualities.Unknown.value
+            })
+            Log.d(TAG, "hub playlist directa -> $label")
+            return true
+        }
+        if (fixed.contains("filemoon", ignoreCase = true) || fixed.contains("byse", ignoreCase = true)) {
+            if (emitByse(fixed, embedUrl, subtitleCallback, callback, label)) return true
             if (loadExtractorCollect(fixed, embedUrl, subtitleCallback, callback, label)) return true
-            if (fixed.contains("streamwish", ignoreCase = true)) {
-                if (emitStreamwishFresh(fixed, embedUrl, label, callback)) return true
-                if (emitStreamwishWebView(fixed, embedUrl, label, callback)) return true
-            }
             Log.w(TAG, "sin links para $label (${fixed.take(80)})")
             return false
+        }
+        if (loadExtractorCollect(fixed, embedUrl, subtitleCallback, callback, label)) return true
+        if (fixed.contains("streamwish", ignoreCase = true)) {
+            if (emitStreamwishFresh(fixed, embedUrl, label, callback)) return true
+            if (emitStreamwishWebView(fixed, embedUrl, label, callback)) return true
+        }
+        Log.w(TAG, "sin links para $label (${fixed.take(80)})")
+        return false
     }
-
 
     private suspend fun emitByse(
         url: String,
@@ -687,7 +728,7 @@ class VeranimeProvider : MainAPI() {
                 val isHls = s.url.contains(".m3u8")
                 callback(newExtractorLink(name, "$label Byse", s.url, if (isHls) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO) {
                     this.referer = hubHost
-                    this.headers = browserHeaders + ("Referer" to hubHost)
+                    this.headers = browserHeaders + ("Referer" to hubUrl)
                     this.quality = Qualities.Unknown.value
                 })
                 found = true
@@ -764,7 +805,7 @@ class VeranimeProvider : MainAPI() {
         return true
     }
 
-    private fun unpackDeanEdwards(packed: String, base: Int, count: Int, dictRaw: String): String? {
+    private suspend fun unpackDeanEdwards(packed: String, base: Int, count: Int, dictRaw: String): String? {
         return try {
             val k = dictRaw.split("|").toTypedArray()
             val result = StringBuilder(packed)

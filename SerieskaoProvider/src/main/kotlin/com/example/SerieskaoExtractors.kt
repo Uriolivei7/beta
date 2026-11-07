@@ -229,7 +229,6 @@ class KaoVoeExtractor {
         return emitted
     }
 
-
     private suspend fun solveAltcha(
         html: String,
         pageUrl: String,
@@ -1067,7 +1066,6 @@ private suspend fun tryVoeExtraction(
                 val webViewMp4 = Regex("""(https?://[^"'\s]+\.mp4[^"'\s]*)""").find(webViewHtml)?.groupValues?.get(1)
                 val webViewUrl = webViewM3u8 ?: webViewMp4
 
-                // CORRECCIÓN AQUÍ: Uso correcto de operadores de negación
                 if (webViewUrl != null && !webViewUrl.contains("test-videos.co.uk") && !webViewUrl.contains("bigbuckbunny")) {
                     Log.d(KAO_TAG, "[Voe] encontrado via WebView: ${webViewUrl.take(120)}")
                     callback(newExtractorLink("SeriesKao", "Voe", webViewUrl, if (webViewM3u8 != null) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO) {
@@ -1109,7 +1107,6 @@ private suspend fun tryVoeExtraction(
                 val webViewMp4 = Regex("""(https?://[^"'\s]+\.mp4[^"'\s]*)""").find(webViewHtml)?.groupValues?.get(1)
                 val webViewUrl = webViewM3u8 ?: webViewMp4
 
-                // CORRECCIÓN AQUÍ: Uso correcto de operadores de negación
                 if (webViewUrl != null && !webViewUrl.contains("test-videos.co.uk") && !webViewUrl.contains("bigbuckbunny")) {
                     Log.d(KAO_TAG, "[Voe] encontrado via WebView tras excepción: ${webViewUrl.take(120)}")
                     callback(newExtractorLink("SeriesKao", "Voe", webViewUrl, if (webViewM3u8 != null) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO) {

@@ -24,4 +24,10 @@ cloudstream {
     )
 
     //iconUrl = "https://github.com/SaurabhKaperwan/CSX/raw/refs/heads/master/NetflixMirrorProvider/icon.png"
+
+    kotlin {
+        compilerOptions {
+            jvmTarget = '11'
+        }
+    }
 }
