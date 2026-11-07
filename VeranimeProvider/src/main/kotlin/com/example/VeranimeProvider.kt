@@ -311,6 +311,19 @@ class VeranimeProvider : MainAPI() {
         }
     }
 
+    private fun decodeMspUrl(encoded: String, pk: String): String? {
+        return try {
+            val bin = android.util.Base64.decode(encoded, android.util.Base64.DEFAULT)
+            val out = StringBuilder()
+            for (i in bin.indices) {
+                out.append((bin[i].toInt() xor pk[i % pk.length].code).toChar())
+            }
+            out.toString()
+        } catch (e: Exception) {
+            null
+        }
+    }
+
     private fun fixMirrorHost(url: String): String {
         return url
             .replaceFirst("https://filemoon.link", "https://filemoon.sx")
@@ -547,6 +560,24 @@ class VeranimeProvider : MainAPI() {
                 }
             }
             if (found) continue
+
+            val mspPk = Regex("\"pk\"\\s*:\\s*\"([^\"]+)\"").find(hub)?.groupValues?.get(1) ?: ""
+            val mspEncoded = Regex("""data-url="([^"]+)"""").findAll(hub).map { it.groupValues[1] }.distinct().toList()
+            Log.d(TAG, "loadLinks msp-data pk=$mspPk found=${mspEncoded.size}")
+            if (mspEncoded.isNotEmpty()) {
+                for (enc in mspEncoded) {
+                    val decoded = decodeMspUrl(enc, mspPk)
+                    if (decoded == null) {
+                        Log.w(TAG, "loadLinks msp-data no decodificable: $enc")
+                        continue
+                    }
+                    Log.d(TAG, "loadLinks msp-data decodificado: $decoded")
+                    if (loadExtractorCollect(fixMirrorHost(decoded), embedUrl, subtitleCallback, callback, "$optTitle MSP")) {
+                        found = true
+                    }
+                }
+                if (found) continue
+            }
 
             // Intento 3: Buscar iframes en el HTML del hub
             val iframes = Jsoup.parse(hub, embedUrl).select("iframe[src]")

@@ -3930,3 +3930,26 @@ Cascada de 3 fases (timeout total 60000ms):
 - **Causa/fix**: LaCartoons ahora detecta host `ok.ru` y procesa el iframe directamente: lee `[data-options]`, parsea `flashvars.metadata`, emite `hlsManifestUrl` como HLS y, si falta, emite `videos[]` progresivos con calidades. El patrón está basado en `tryOkruDanimados`, que ya funciona con fuentes OK.ru en el repo. Añade logs de status/longitud/presencia de metadata y conteos, sin imprimir URLs completas.
 - Versiones a **26** en `LacartoonsProvider/build.gradle.kts` y `plugins.json`; `fileSize` pendiente de regenerar el artefacto. Gradle no ejecutado por regla del repo. Comando: ` .\gradlew.bat :LacartoonsProvider:make --console=plain -q`.
 - **Pendiente en dispositivo**: instalar v26 y probar Los Campeones de Disney T1E1; esperar `[OK.ru] ... HLS emitido` o `progresivos emitidos=N`, luego confirmar playback. Si metadata está ausente, compartir las líneas `[OK.ru]` para decidir si el reproductor cambió de formato.
+
+## VeranimeProvider — Fix msp-data decoding (07 Nov 2026 v9)
+
+### Síntoma
+- Los episodios de darkanimes.com (ej. One Punch Man S2E12) devolvían "enlaces no encontrados" porque el hub https://darkanimes.com/one-punch-man-2-12/ usa el plugin **multiserver-pro**, cuyos servidores están ocultos en atributos data-url="..." codificados en **base64 → XOR** con la clave pk del JSON embebido en <script id="msp-data">.
+
+### Causa raíz
+- El provider buscaba enlaces directos .m3u8/.mp4 e iframes en el HTML del hub, pero multiserver-pro no expone URLs en claro: cada data-url es una cadena base64 que al decodificar da bytes, y cada byte se XOR-ea con pk[i % pk.length] (pk = clave del JSON msp-data, ej. "13c2e890f443").
+- Ejemplo verificado: WUcXQhYCFh8AXVhWXVoMXBYWTV8WG0IcWwBTQQ5WUwccXldF con pk 13c2e890f443 → https://filelions.top/v/j30sknj7zjcv.
+
+### Fix
+- Añadido **Intento 0** en loadLinks: extrae pk del JSON msp-data con regex "pk"\s*:\s*"([^"]+)", busca todos los data-url="..." (distinct), los decodifica con decodeMspUrl() (base64 decode + XOR byte a byte con pk) y los pasa por loadExtractorCollect con ixMirrorHost().
+- Nueva función decodeMspUrl(encoded, pk): String? (helper privado).
+- Si algún data-url no decodifica, se loguea y se omite (fail-open). Si no se encontraron data-url, se continúa con los intentos anteriores (directos + iframes).
+
+### Archivos tocados
+- VeranimeProvider/src/main/kotlin/com/example/VeranimeProvider.kt (decodeMspUrl + Intento 0 en loadLinks)
+- VeranimeProvider/build.gradle.kts (version 8 → 9)
+- plugins.json (VeranimeProvider version 8 → 9, fileSize pendiente)
+
+### Estado
+- No compilado por regla del repo. Comando: .\gradlew.bat :VeranimeProvider:make --console=plain -q
+- ⏸️ Pendiente: compilar, actualizar fileSize, instalar y probar. Logs esperados: loadLinks msp-data pk=..., loadLinks data-url decodificado: https://..., loadLinks ... -> OK.
