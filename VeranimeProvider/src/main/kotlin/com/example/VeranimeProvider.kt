@@ -488,7 +488,6 @@ class VeranimeProvider : MainAPI() {
             return false
         }
 
-        // Paso 1: Obtener la página del episodio
         val pageUrl = u.substringBefore("?")
         val doc = try {
             app.get(u, headers = browserHeaders + ("Referer" to mainUrl), timeout = 120L).document
@@ -498,7 +497,6 @@ class VeranimeProvider : MainAPI() {
             return false
         }
 
-        // Paso 2: Obtener las opciones de servidor (botones)
         val options = doc.select("li.dooplay_player_option")
         Log.d(TAG, "loadLinks opciones=${options.size}")
         if (options.isEmpty()) {
@@ -520,7 +518,6 @@ class VeranimeProvider : MainAPI() {
 
             Log.d(TAG, "procesando opción: $optTitle (post=$post, nume=$nume, type=$type)")
 
-            // Paso 3: Hacer AJAX para obtener embed URL
             val embedUrl = dooPlayerAjax(pageUrl, post, nume, type)
             if (embedUrl.isNullOrBlank()) {
                 Log.w(TAG, "sin embed para $optTitle")
@@ -529,7 +526,6 @@ class VeranimeProvider : MainAPI() {
 
             Log.d(TAG, "loadLinks embed URL: $embedUrl")
 
-            // Paso 4: Obtener HTML del embed
             val hub = try {
                 app.get(embedUrl, headers = browserHeaders + ("Referer" to pageUrl), timeout = 60L).text
             } catch (e: Exception) {
@@ -543,8 +539,6 @@ class VeranimeProvider : MainAPI() {
                 continue
             }
 
-            // Paso 5: Procesar según el tipo de servidor
-            // Intento A: Si el hub tiene datos OD (saidochesto), usar esa ruta
             if ("OD_SUB" in hub || "OD_LAT" in hub || "OD_ES" in hub) {
                 Log.d(TAG, "usando rama saidochesto para $optTitle")
                 if (emitSaidochesto(hub, embedUrl, optTitle, subtitleCallback, callback)) {
@@ -554,7 +548,6 @@ class VeranimeProvider : MainAPI() {
                 continue
             }
 
-            // Intento 2: Buscar enlaces directos .m3u8/.mp4 en el HTML del hub
             val directLinks = mutableListOf<String>()
             Regex("""https?://[^"'\s<>]+\.m3u8[^"'\s<>]*""").findAll(hub).forEach { m ->
                 val candidate = m.value.trimEnd(')', ',', ';', '.')

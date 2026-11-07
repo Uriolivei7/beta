@@ -3994,3 +3994,40 @@ Cascada de 3 fases (timeout total 60000ms):
 ### Estado
 - No compilado por regla del repo. Comando: .\gradlew.bat :VeranimeProvider:make --console=plain -q
 - ⏸️ Pendiente: compilar, actualizar fileSize, instalar y probar. Logs esperados: loadLinks msp-data decodificado: https://filemooon.link/... (Latino), yse sources=N, loadLinks ... -> OK.
+
+## ElChavo8TVProvider — Plugin nuevo (07 Nov 2026 v1)
+
+### Sitio
+- https://elchavodel8tv.com/ — WordPress con capítulos de El Chavo del 8, Chapulín Colorado, Chespirito, Kiko, etc.
+
+### Arquitectura
+| Componente | Patrón | Implementación |
+|---|---|---|
+| Home | Páginas de serie WordPress | getMainPage devuelve filas por serie con enlaces a temporadas |
+| Temporadas | /temporada-1979-el-chavo-del-8-latino/ | load parsea enlaces javascript:ServidorXChespTV(id) |
+| Episodios | Cada capítulo tiene Opción 1 y Opción 2 | load crea EpisodeItem con fragmento #ep{id} |
+| Reproducción | Servidor1ChespTV(id) / Servidor2ChespTV(id) arrays JS inline | loadLinks parsea urls[] del HTML, indexa por epId, construye URL haz-clic-para-reproducirv2/?UrlPok=<encoded>&tipo=<tipo> |
+
+### Flujo de loadLinks
+1. Obtiene HTML del episodio/temporada
+2. Extrae enlaces [href^='javascript:Servidor'] → obtiene serverNum y epId
+3. Parsea el array urls[] del script JS correspondiente
+4. Accede a urls[epId] para obtener rchivo.mp4&tipo=chespirito
+5. Construye https://elchavodel8tv.com/haz-clic-para-reproducirv2/?UrlPok=<urlencode>&tipo=...
+6. Emite como ExtractorLink tipo VIDEO con referer = página del episodio
+
+### Limitaciones conocidas
+- El redirect haz-clic-para-reproducirv2/ puede no resolver a un video directo desde pp.get (Cloudflare/JS). Si el link emitido no reproduce, puede requerir WebView para seguir el redirect.
+- Se enfoca en Servidor 1 y 2 (ChespTV/Chespirito). Servidor Kiko está incluido pero son videos extras.
+
+### Archivos
+- ElChavo8TVProvider/build.gradle.kts (v1, es, TvSeries+Cartoon)
+- ElChavo8TVProvider/src/main/AndroidManifest.xml
+- ElChavo8TVProvider/src/main/kotlin/com/example/ElChavo8TVPlugin.kt
+- ElChavo8TVProvider/src/main/kotlin/com/example/ElChavo8TVProvider.kt
+- plugins.json: entrada ElChavo8TV/ElChavo8TVProvider v1 (ileSize: 0 pendiente)
+- AGENTS.md: esta sección
+
+### Estado
+- No compilado por regla del repo. Comando: .\gradlew.bat :ElChavo8TVProvider:make --console=plain -q
+- ⏸️ Pendiente: compilar, actualizar fileSize, instalar y probar. Logs: db logcat -s ElChavo8TV:V buscando loadLinks video URL: y loadLinks ... -> OK.
