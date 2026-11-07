@@ -3953,3 +3953,24 @@ Cascada de 3 fases (timeout total 60000ms):
 ### Estado
 - No compilado por regla del repo. Comando: .\gradlew.bat :VeranimeProvider:make --console=plain -q
 - ⏸️ Pendiente: compilar, actualizar fileSize, instalar y probar. Logs esperados: loadLinks msp-data pk=..., loadLinks data-url decodificado: https://..., loadLinks ... -> OK.
+
+## VeranimeProvider — Idiomas en enlaces MSP (07 Nov 2026 v10)
+
+### Síntoma
+- Los enlaces decodificados del msp-data no mostraban el idioma (Latino/Castellano/Subtitulado). El usuario pedía saber qué idioma es cada enlace.
+
+### Fix
+- El bloque "Intento 0" ahora usa Jsoup (hubDoc.select("[data-url]")) para parsear cada elemento con data-url y extrae data-lang del contenedor padre (ul).
+- Nueva función langIdToName(langId): String mapea IDs de idioma: 1→Latino, 2→Castellano, 3→Subtitulado, 4→Japonés, 5→Inglés.
+- Cada enlace se emite con label " [] MSP" (ej. MULTISERVER [Latino] MSP).
+- Si el idioma no se reconoce, se usa el label sin idioma ($optTitle MSP).
+
+### Archivos tocados
+- VeranimeProvider/src/main/kotlin/com/example/VeranimeProvider.kt (Jsoup parsing + langIdToName en Intento 0)
+- VeranimeProvider/build.gradle.kts (version 9 → 10)
+- plugins.json (VeranimeProvider version 9 → 10, fileSize pendiente)
+- AGENTS.md (esta sección)
+
+### Estado
+- No compilado por regla del repo. Comando: .\gradlew.bat :VeranimeProvider:make --console=plain -q
+- ⏸️ Pendiente: compilar, actualizar fileSize, instalar y probar. Logs esperados: loadLinks msp-data decodificado: https://... (Latino), loadLinks ... -> OK.
