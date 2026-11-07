@@ -339,26 +339,7 @@ class Atalayas21Provider : MainAPI() {
                 true
             }
             cleanUrl.contains("youtube.com") || cleanUrl.contains("youtu.be") -> {
-                Log.d(TAG, "handleVideoUrl: YouTube -> emit direct YouTube link")
-                // YouTube URLs directas funcionan en ExoPlayer si se le dan con headers
-                val ytId = extractYouTubeId(cleanUrl)
-                if (ytId != null) {
-                    val ytUrl = "https://www.youtube.com/watch?v=$ytId"
-                    callback.invoke(
-                        newExtractorLink(name, "YouTube", ytUrl, ExtractorLinkType.M3U8) {
-                            this.referer = "https://www.youtube.com/"
-                            this.quality = Qualities.Unknown.value
-                            this.headers = mapOf(
-                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
-                                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                                "Accept-Language" to "es-ES,es;q=0.9"
-                            )
-                        }
-                    )
-                    return true
-                }
-                // Fallback: intentar extractor nativo
-                Log.d(TAG, "handleVideoUrl: YouTube -> trying loadExtractor")
+                Log.d(TAG, "handleVideoUrl: YouTube -> using loadExtractor for YouTube")
                 return loadExtractor(cleanUrl, data, subtitleCallback, callback)
             }
             cleanUrl.contains("ok.ru") -> {
