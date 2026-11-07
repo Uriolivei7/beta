@@ -246,7 +246,6 @@ class Atalayas21Provider : MainAPI() {
         if (u.contains("?id=")) {
             apiId = u.substringAfter("?id=").substringBefore("&").trim()
         } else {
-            // Puede ser un ID directo
             apiId = u.substringAfterLast("/").trim()
         }
         Log.d(TAG, "loadLinks apiId=$apiId")
@@ -330,7 +329,7 @@ class Atalayas21Provider : MainAPI() {
 
         return when {
             cleanUrl.endsWith(".m3u8", ignoreCase = true) || cleanUrl.endsWith(".mp4", ignoreCase = true) || cleanUrl.endsWith(".mpd", ignoreCase = true) -> {
-                Log.d(TAG, "handleVideoUrl: direct HLS/MP4/MPD")
+                Log.d(TAG, "handleVideoUrl: direct HLS/MP4/MPD -> emit direct")
                 callback.invoke(
                     newExtractorLink(name, name, cleanUrl, ExtractorLinkType.M3U8) {
                         this.referer = "$BASE_URL/"
@@ -339,18 +338,39 @@ class Atalayas21Provider : MainAPI() {
                 )
                 true
             }
+            cleanUrl.contains("youtube.com") || cleanUrl.contains("youtu.be") -> {
+                Log.d(TAG, "handleVideoUrl: YouTube -> emit direct YouTube link")
+                // YouTube URLs directas funcionan en ExoPlayer si se le dan con headers
+                val ytId = extractYouTubeId(cleanUrl)
+                if (ytId != null) {
+                    val ytUrl = "https://www.youtube.com/watch?v=$ytId"
+                    callback.invoke(
+                        newExtractorLink(name, "YouTube", ytUrl, ExtractorLinkType.M3U8) {
+                            this.referer = "https://www.youtube.com/"
+                            this.quality = Qualities.Unknown.value
+                            this.headers = mapOf(
+                                "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36",
+                                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                                "Accept-Language" to "es-ES,es;q=0.9"
+                            )
+                        }
+                    )
+                    return true
+                }
+                // Fallback: intentar extractor nativo
+                Log.d(TAG, "handleVideoUrl: YouTube -> trying loadExtractor")
+                return loadExtractor(cleanUrl, data, subtitleCallback, callback)
+            }
             cleanUrl.contains("ok.ru") -> {
-                Log.d(TAG, "handleVideoUrl: ok.ru URL, trying native extractor first")
-                // Primero intentar el extractor nativo de CS3
+                Log.d(TAG, "handleVideoUrl: ok.ru -> trying native extractor first")
                 val nativeResult = loadExtractor(cleanUrl, data, subtitleCallback, callback)
                 Log.d(TAG, "handleVideoUrl: native ok.ru result=$nativeResult")
                 if (nativeResult) return true
 
-                // Si el nativo falló, intentar nuestro extractor propio
-                Log.d(TAG, "handleVideoUrl: trying custom ok.ru extractor")
+                Log.d(TAG, "handleVideoUrl: ok.ru -> trying custom ok.ru extractor")
                 return tryOkruExtractor(cleanUrl, data, subtitleCallback, callback)
             }
-            cleanUrl.contains("vk.com") || cleanUrl.contains("youtube.com") || cleanUrl.contains("youtu.be") || cleanUrl.contains("vimeo.com") || cleanUrl.contains("dailymotion.com") -> {
+            cleanUrl.contains("vk.com") || cleanUrl.contains("vimeo.com") || cleanUrl.contains("dailymotion.com") -> {
                 Log.d(TAG, "handleVideoUrl: other known host, using loadExtractor")
                 return loadExtractor(cleanUrl, data, subtitleCallback, callback)
             }
@@ -360,7 +380,24 @@ class Atalayas21Provider : MainAPI() {
             }
         }
     }
-    
+
+    private fun extractYouTubeId(url: String): String? {
+        val patterns = listOf(
+            Regex("""[?&]v=([a-zA-Z0-9_-]{11})"""),
+            Regex("""youtu\.be/([a-zA-Z0-9_-]{11})"""),
+            Regex("""embed/([a-zA-Z0-9_-]{11})""")
+        )
+        for (p in patterns) {
+            val m = p.find(url)
+            if (m != null) return m.groupValues[1]
+        }
+        return null
+    }
+
+    /**
+     * Extractor propio para ok.ru cuando el nativo de CS3 falla.
+     * Descarga la página del embed y busca el HLS/MP4 directo.
+     */
     private suspend fun tryOkruExtractor(
         url: String,
         data: String,

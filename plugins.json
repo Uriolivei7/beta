@@ -928,11 +928,11 @@
   "fileSize": 65000
  },
  {
-  "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/Atalayas21Provider.cs3",
-  "status": 1,
-  "version": 1,
-  "apiVersion": 1,
-  "name": "Atalayas21",
+   "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/Atalayas21Provider.cs3",
+   "status": 1,
+   "version": 2,
+   "apiVersion": 1,
+   "name": "Atalayas21",
   "internalName": "Atalayas21Provider",
   "authors": [
    "Ranita"
