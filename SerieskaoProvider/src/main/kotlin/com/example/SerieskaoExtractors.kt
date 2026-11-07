@@ -1027,7 +1027,7 @@ private suspend fun tryVoeExtraction(    url: String,
             return tryMirrors()
         }
 
-        val type = ExtractorLinkType.M3U8
+        val type = if (m3u8 != null) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
         Log.d(KAO_TAG, "[Voe] found ${if (m3u8 != null) "m3u8" else "mp4"}: ${videoUrl.take(120)}")
 
         callback(newExtractorLink("SeriesKao", "Voe", videoUrl, type) {
