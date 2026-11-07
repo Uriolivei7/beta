@@ -3974,3 +3974,23 @@ Cascada de 3 fases (timeout total 60000ms):
 ### Estado
 - No compilado por regla del repo. Comando: .\gradlew.bat :VeranimeProvider:make --console=plain -q
 - ⏸️ Pendiente: compilar, actualizar fileSize, instalar y probar. Logs esperados: loadLinks msp-data decodificado: https://... (Latino), loadLinks ... -> OK.
+
+## VeranimeProvider — Idiomas + Byse para Filemoon (07 Nov 2026 v11)
+
+### Síntoma
+- Los idiomas mostraban vacíos () porque elem.parent() buscaba en li (padre directo del botón con data-url), pero data-lang está en ul (abuelo).
+- Filemoon no emitía enlaces: Intento 0 llamaba a loadExtractorCollect directo sin pasar por emitByse, que es el que usa ByseHttpExtractor para servers tipo Byse (filemoon, bysekoze, etc.).
+
+### Fix
+- **Idiomas**: elem.parents().firstOrNull { it.hasAttr("data-lang") } busca en todos los ancestros hasta encontrar ul[data-lang]. Luego langIdToName() mapea 1→Latino, 2→Castellano, 3→Subtitulado, 4→Japonés, 5→Inglés.
+- **Filemoon/Byse**: Antes de loadExtractorCollect, se verifica si el host contiene ilemoon o yse; si es así, se llama primero a emitByse() (que usa ByseHttpExtractor). Si falla, cae a loadExtractorCollect como fallback.
+
+### Archivos tocados
+- VeranimeProvider/src/main/kotlin/com/example/VeranimeProvider.kt (Intento 0: elem.parents() + emitByse para filemoon/byse)
+- VeranimeProvider/build.gradle.kts (version 10 → 11)
+- plugins.json (VeranimeProvider version 10 → 11, fileSize pendiente)
+- AGENTS.md (esta sección)
+
+### Estado
+- No compilado por regla del repo. Comando: .\gradlew.bat :VeranimeProvider:make --console=plain -q
+- ⏸️ Pendiente: compilar, actualizar fileSize, instalar y probar. Logs esperados: loadLinks msp-data decodificado: https://filemooon.link/... (Latino), yse sources=N, loadLinks ... -> OK.

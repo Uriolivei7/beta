@@ -579,7 +579,8 @@ class VeranimeProvider : MainAPI() {
             if (mspServers.isNotEmpty()) {
                 for (elem in mspServers) {
                     val enc = elem.attr("data-url")
-                    val langId = elem.parent()?.attr("data-lang") ?: elem.attr("data-lang") ?: ""
+                    val langElem = elem.parents().firstOrNull { it.hasAttr("data-lang") }
+                    val langId = langElem?.attr("data-lang") ?: ""
                     val langName = langIdToName(langId)
                     val label = if (langName.isNotEmpty()) "$optTitle [$langName] MSP" else "$optTitle MSP"
                     val decoded = decodeMspUrl(enc, mspPk)
@@ -587,8 +588,16 @@ class VeranimeProvider : MainAPI() {
                         Log.w(TAG, "loadLinks msp-data no decodificable: $enc")
                         continue
                     }
-                    Log.d(TAG, "loadLinks msp-data decodificado: $decoded ($langName)")
-                    if (loadExtractorCollect(fixMirrorHost(decoded), embedUrl, subtitleCallback, callback, label)) {
+                    val fixed = fixMirrorHost(decoded)
+                    Log.d(TAG, "loadLinks msp-data decodificado: $fixed ($langName)")
+                    if (fixed.contains("filemoon", ignoreCase = true) || fixed.contains("byse", ignoreCase = true)) {
+                        if (emitByse(fixed, embedUrl, subtitleCallback, callback, label)) {
+                            found = true
+                            continue
+                        }
+                        Log.d(TAG, "loadLinks msp-data byse falló, extractor por defecto: $fixed")
+                    }
+                    if (loadExtractorCollect(fixed, embedUrl, subtitleCallback, callback, label)) {
                         found = true
                     }
                 }
