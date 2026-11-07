@@ -16,6 +16,7 @@ class ElChavo8TVPlugin : Plugin() {
     override fun load(context: Context) {
         Log.d(TAG, "ElChavo8TVPlugin load() llamado con context: ${context.packageName}")
         ElChavo8TVProvider.pluginContext = context
+        registerMainAPI(ElChavo8TVProvider())
         Log.d(TAG, "ElChavo8TVProvider.pluginContext seteado")
     }
 }
