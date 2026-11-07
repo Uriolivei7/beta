@@ -26,10 +26,12 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Interceptor
 import okhttp3.Response
+import org.json.JSONArray
 import org.json.JSONObject
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import java.net.URLEncoder
+import java.util.Base64
 import java.util.concurrent.TimeUnit
 
 private const val TAG = "VerAnime"
@@ -317,7 +319,7 @@ class VeranimeProvider : MainAPI() {
             .replaceFirst("https://uqload.io", "https://uqload.cx")
             .replaceFirst("https://uqload.is", "https://uqload.cx")
             .replaceFirst("https://uqload.vc", "https://uqload.cx")
-            .replaceFirst("https://uqload.com", "https://uqload.com")
+            .replaceFirst("https://uqload.com", "https://uqload.cx")
             .replaceFirst("https://lulu.st", "https://lulustream.com")
             .replaceFirst("https://do7go.com", "https://dood.la")
             .replaceFirst("https://dood.sh", "https://playmogo.com")
@@ -534,7 +536,7 @@ class VeranimeProvider : MainAPI() {
                 val candidate = m.value.trimEnd(')', ',', ';', '.')
                 val url = if (candidate.startsWith("//")) "https:$candidate" else candidate
                 val host = runCatching { java.net.URL(url).host.lowercase() }.getOrDefault("")
-                if (host != "serieskao.top" && host != "embed69.org") {
+                if (host != "veranime.ninja" && host != "embed69.org") {
                     directLinks.add(candidate)
                     Log.d(TAG, "enlace directo encontrado: $candidate")
                     callback(newExtractorLink(name, "$optTitle [Directo]", candidate, ExtractorLinkType.M3U8) {
@@ -549,10 +551,13 @@ class VeranimeProvider : MainAPI() {
             // Intento 3: Buscar iframes en el HTML del hub
             val iframes = Jsoup.parse(hub, embedUrl).select("iframe[src]")
             Log.d(TAG, "hub genérico: ${iframes.size} iframes")
-            for (frame in iframes) {
-                val src = frame.attr("abs:src").trim()
+            var hubFound = false
+            for (iframe in iframes) {
+                val src = iframe.attr("abs:src").trim()
                 if (src.isBlank()) continue
+                Log.d(TAG, "hub iframe: $src")
                 if (loadExtractorCollect(fixMirrorHost(src), embedUrl, subtitleCallback, callback, "$optTitle Mirror")) {
+                    hubFound = true
                     found = true
                 }
             }
@@ -603,74 +608,6 @@ class VeranimeProvider : MainAPI() {
     ): Boolean {
         val fixed = fixMirrorHost(mirror)
         val label = "$optTitle $langLabel"
-        val isPlaylist = fixed.contains(".m3u8") || fixed.contains("/m3u8/")
-        if (isPlaylist) {
-            callback(newExtractorLink(name, label, fixed, ExtractorLinkType.M3U8) {
-                this.referer = embedUrl
-                this.headers = if (fixed.contains("zilla-networks.com")) zillaHeaders else browserHeaders + ("Referer" to embedUrl)
-                this.quality = Qualities.Unknown.value
-            })
-            Log.d(TAG, "hub playlist directa -> $label")
-            return true
-        }
-        if (fixed.contains("filemoon", ignoreCase = true) || fixed.contains("byse", ignoreCase = true)) {
-            if (emitByse(fixed, embedUrl, subtitleCallback, callback, label)) return true
-            if (loadExtractorCollect(fixed, embedUrl, subtitleCallback, callback, label)) return true
-            Log.w(TAG, "sin links para $label (${fixed.take(80)})")
-            return false
-        }
-        if (loadExtractorCollect(fixed, embedUrl, subtitleCallback, callback, label)) return true
-        if (fixed.contains("streamwish", ignoreCase = true)) {
-            if (emitStreamwishFresh(fixed, embedUrl, label, callback)) return true
-            if (emitStreamwishWebView(fixed, embedUrl, label, callback)) return true
-        }
-        Log.w(TAG, "sin links para $label (${fixed.take(80)})")
-        return false
-    }
-
-    private suspend fun emitCyberlockerJson(
-        hub: String,
-        embedUrl: String,
-        optTitle: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit,
-    ): Boolean {
-
-        val items = Regex("\\{\\s*\"cyberlocker\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"link\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"language\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"quality\"\\s*:\\s*\"([^\"]+)\"\\s*\\}")
-            .findAll(hub).toList()
-        if (items.isEmpty()) return false
-        Log.d(TAG, "hub cyberlocker: ${items.size} mirrors")
-
-        val sorted = items.sortedBy {
-            val lang = it.groupValues[3].lowercase()
-            when {
-                lang.contains("lat") -> 0
-                lang.contains("cast") || lang == "español" || lang == "espanol" -> 1
-                else -> 2
-            }
-        }
-
-        val results = sorted.amap { m -> resolveCyberMirror(m, embedUrl, optTitle, subtitleCallback, callback) }
-        return results.any { it }
-    }
-
-    private suspend fun resolveCyberMirror(
-        m: MatchResult,
-        embedUrl: String,
-        optTitle: String,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit,
-    ): Boolean {
-        val langRaw = m.groupValues[3]
-        val langLabel = when {
-            langRaw.contains("lat", ignoreCase = true) -> "Latino"
-            langRaw.contains("cast", ignoreCase = true) -> "Castellano"
-            langRaw.equals("español", ignoreCase = true) -> "Castellano"
-            langRaw.contains("jap", ignoreCase = true) -> "Subtitulado"
-            else -> langRaw
-        }
-        val fixed = fixMirrorHost(m.groupValues[2])
-        val label = "$optTitle $langLabel [${m.groupValues[1]}]"
         val isPlaylist = fixed.contains(".m3u8") || fixed.contains("/m3u8/")
         if (isPlaylist) {
             callback(newExtractorLink(name, label, fixed, ExtractorLinkType.M3U8) {
