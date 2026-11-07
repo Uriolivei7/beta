@@ -27,7 +27,7 @@ cloudstream {
 
     kotlin {
         compilerOptions {
-            jvmTarget = '11'
+            jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
         }
     }
 }
