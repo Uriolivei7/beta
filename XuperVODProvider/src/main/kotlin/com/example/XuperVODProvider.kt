@@ -15,7 +15,7 @@ class XuperVODProvider : MainAPI() {
     override var mainUrl = "https://modlyo.com/magis_web"
     override var name = "XuperVOD"
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie)
-    override var lang = "es"
+    override var lang = "mx"
     override val hasMainPage = true
     override val hasDownloadSupport = true
 

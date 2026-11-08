@@ -4110,3 +4110,27 @@ Cascada de 3 fases (timeout total 60000ms):
 - `build.gradle.kts` y `plugins.json` de ambos a **v2**; `fileSize` pendiente tras compilar.
 - Compilacion: pendiente por el usuario (`.\gradlew.bat :XuperVODProvider:make --console=plain -q` y `:XuperLiveProvider:make --console=plain -q`). **No compilado por regla del repo.**
 - â¸ï¸ Pendiente: probar con VPN en region permitida. Sin VPN el resultado es vacio por diseno del servidor.
+
+
+## ElChavo8TVProvider â€” Home por serie + videos Servidor1/2 (08 Nov 2026 v4)
+### Sintomas
+- Home mostraba una fila por temporada (nombres feos tipo "el chapulin colorado temporada 1 1972.html"), no agrupado por serie.
+- `loadLinks` daba "enlaces no encontrados": `extractByseUrl: no se encontrÃ³ array urls para Servidor1/2`.
+
+### Causas raiz
+- Regex del array exigÃ­a `\(id\) \{ ` (llave + ESPACIO) pero el HTML tiene `{\n  var urls`. AdemÃ¡s usaba el nÃºmero de servidor y no el nombre exacto de la funciÃ³n.
+- Hay VARIAS funciones Servidor en la pÃ¡gina (`Servidor1ChespTV`, `Servidor2ChespTV`, `Servidor1Kiko`, `Servidor2Kiko`, `ServidorLC1`, `ServidorLC2`). El array de `Servidor1ChespTV` es **global (1397 items)** y el `epId` (ej. 433) es Ã­ndice directo en ese array. El Ã­ndice 433 = "Chapulin colorado original - Temporada 72" capÃ­tulo 1.
+- `loadLinks` recorrÃ­a TODOS los enlaces de la pÃ¡gina (7 cap Ã— 2 servidores) en vez de solo el episodio pulsado (`#ep<id>`), y re-fetcheaba muchos.
+
+### Fix
+- **Home agrupado**: `getMainPage` devuelve `newHomePageResponse(request.name, items, false)` â†’ una fila por serie (nombre de mainPage) con las temporadas como items. `cleanSeasonName()` produce "Temporada 1 (1972)", "Temporada 1971-1972", "Temporada 1994".
+- **load()**: dedupe por id global; tÃ­tulo del capÃ­tulo tomado del TextNode anterior al `<br>`/ancla (`precedingTitle`); renumeraciÃ³n limpia 1..N; URL de episodio `.../temporada#ep<idGlobal>`.
+- **loadLinks()**: filtra solo el id pulsado; `extractArrayEntry()` usa el **nombre exacto** de funciÃ³n y regex tolerante `function\s+<func>\s*\(id\)\s*\{[\s\S]*?var\s+urls\s*=\s*\[...\];`.
+  - **Servidor 1** (`.../e/...`): Byse (POST a bysedikamoum/api/source), timeout 15s.
+  - **Servidor 2** (`...mp4&tipo=...`): MP4 directo `media.pokemonlaserielatino.xyz` + base por `tipo` (chavo/animado/chapulinreal/chapulinanimado/chespirito/sinquererqueriendo/Pelis/kiko). Verificado 200 con Referer `https://pokemonlaserielatino.xyz/`.
+- **getVideoInterceptor**: inyecta UA + Referer + Origin a todo `pokemonlaserielatino` (MP4 directo y sus range requests). `source=name` en todos los links para que CS3 llame al interceptor.
+
+### Estado v4
+- `build.gradle.kts` y `plugins.json` a **v4**; `fileSize` pendiente tras compilar.
+- Compilacion: pendiente por el usuario (`.\gradlew.bat :ElChavo8TVProvider:make --console=plain -q`). **No compilado por regla del repo.**
+- â¸ï¸ Pendiente: probar en dispositivo un capÃ­tulo de El ChapulÃ­n T1 (deben salir 2 links: `Servidor1ChespTV Byse` y `Servidor2ChespTV MP4`), y verificar home con 7 filas de serie y temporadas dentro.

@@ -15,7 +15,7 @@ class XuperLiveProvider : MainAPI() {
     override var mainUrl = "https://modlyo.com/magis_web"
     override var name = "XuperLive"
     override val supportedTypes = setOf(TvType.Live)
-    override var lang = "es"
+    override var lang = "mx"
     override val hasMainPage = true
     override val hasDownloadSupport = true
 
