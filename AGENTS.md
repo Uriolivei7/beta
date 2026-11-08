@@ -4186,3 +4186,11 @@ Cascada de 3 fases (timeout total 60000ms):
 - Versiones a **7** (uild.gradle.kts + plugins.json); ileSize pendiente.
 - Compilacion: pendiente por el usuario (.\gradlew.bat :ElChavo8TVProvider:clean :ElChavo8TVProvider:make --console=plain -q). **No compilado por regla del repo.**
 - ⏸️ Pendiente: probar home del Chavo (nombres "Temporada YYYY" en vez de URL) y search "chapulin" (debe traer varias paginas, ej. ~30+ resultados).
+
+## Animeav1Provider — Fix ONA/OVA tratados como película (08 Nov 2026 v2)
+- **Sintoma (usuario)**: en AnimeAV1, Horimiya (TV Anime, 13 eps) salia bien con todos los episodios, pero "Guimi Zhi Zhu: Xiaochou Pian" (tipo **ONA**, 13 eps) salia como **pelicula**.
+- **Causa raiz**: getTvType() solo reconocia "TV Anime" y "OVA" como Anime; cualquier otro tipo (incluye **ONA**) caia en else -> TvType.Movie, asi que load() entraba a la rama de pelicula y no extraia episodios.
+- **Fix**: getTvType() ahora solo devuelve TvType.Movie si el texto contiene "Película"/"Pelicula"/"Movie"; **todo lo demas** (TV Anime, ONA, OVA, Especial, vacio) -> TvType.Anime (con episodios). Se agrego log LOAD METADATA: rawtype='...' -> type=....
+- Versiones a **2** (uild.gradle.kts + plugins.json); ileSize pendiente.
+- Compilacion: pendiente por el usuario (.\gradlew.bat :Animeav1Provider:make --console=plain -q). **No compilado por regla del repo.**
+- ⏸️ Pendiente: probar Guimi Zhi Zhu (debe listar 13 episodios, no como pelicula).

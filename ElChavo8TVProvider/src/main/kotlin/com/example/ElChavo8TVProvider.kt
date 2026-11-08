@@ -40,7 +40,6 @@ class ElChavo8TVProvider : MainAPI() {
         "Accept" to "*/*",
     )
 
-    // Bases de media por "tipo" (igual que el JS de la web: rutasSeries)
     private val mediaBases = mapOf(
         "chavo" to "https://media.pokemonlaserielatino.xyz/Series/El Chavo del 8 y Chapulin Colorado/El chavo del 8/",
         "animado" to "https://media.pokemonlaserielatino.xyz/Series/El Chavo del 8 y Chapulin colorado animado/El Chavo animado/",
@@ -104,7 +103,7 @@ class ElChavo8TVProvider : MainAPI() {
             for (u in seasonLinks) {
                 val seasonName = cleanSeasonName(u)
                 Log.d(TAG, "temporada name='$seasonName' url='$u'")
-                // buscar imagen cercana al enlace; si no, póster de la serie
+
                 val nearImg = doc.selectFirst("a[href='$u'] img")?.attr("abs:src")
                     ?: doc.selectFirst("a[href*='${u.substringAfterLast("/")}'] img")?.attr("abs:src")
                 val poster = nearImg?.takeIf { it.isNotBlank() } ?: seriesPoster
@@ -315,7 +314,6 @@ class ElChavo8TVProvider : MainAPI() {
         val doc = Jsoup.parse(html, baseUrl)
         val defaultTipo = inferTipo(baseUrl)
 
-        // funciones servidor para el episodio pulsado
         val funcs = mutableListOf<String>()
         for (el in doc.select("a[href^='javascript:Servidor']")) {
             val m = Regex("""(Servidor\w+)\((\d+)\)""").find(el.attr("href")) ?: continue
@@ -331,11 +329,11 @@ class ElChavo8TVProvider : MainAPI() {
             val entry = extractArrayEntry(html, func, wantedId) ?: continue
             Log.d(TAG, "loadLinks entry[$func]=${entry.take(90)}")
             if (entry.startsWith("http")) {
-                // Servidor 1 = Byse (frontend con challenge)
+
                 if (emitByse(entry, baseUrl, subtitleCallback, callback)) found = true
                 continue
             }
-            // Servidor 2 = MP4 directo (entrada relativa .mp4, con o sin &tipo=)
+
             val filePart = entry.substringBefore("&tipo=").trim()
             if (filePart.isEmpty()) continue
             val tipo = if (entry.contains("&tipo=")) entry.substringAfter("&tipo=").substringBefore("&").trim() else defaultTipo
@@ -354,7 +352,6 @@ class ElChavo8TVProvider : MainAPI() {
         return found
     }
 
-    /** Servidor 1: Byse frontend (challenge/attestation) via ByseHttpExtractor. */
     private suspend fun emitByse(
         embedUrl: String,
         pageUrl: String,
