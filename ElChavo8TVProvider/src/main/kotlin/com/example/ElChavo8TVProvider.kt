@@ -5,11 +5,7 @@ import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.TimeoutCancellationException
-import kotlinx.coroutines.withTimeout
-import okhttp3.FormBody
 import okhttp3.Interceptor
-import okhttp3.Response
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 import org.jsoup.nodes.TextNode
@@ -19,7 +15,6 @@ class ElChavo8TVProvider : MainAPI() {
     companion object {
         var pluginContext: Context? = null
         private const val TAG = "ElChavo8TV"
-        private const val BYSE_API = "https://bysedikamoum.com/api/source"
         private const val MEDIA_REFERER = "https://pokemonlaserielatino.xyz/"
         private const val UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
     }
@@ -70,8 +65,7 @@ class ElChavo8TVProvider : MainAPI() {
     override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor {
         return Interceptor { chain ->
             val req = chain.request()
-            val host = req.url.host
-            if (host.contains("pokemonlaserielatino")) {
+            if (req.url.host.contains("pokemonlaserielatino")) {
                 val b = req.newBuilder()
                 for ((k, v) in mediaHeaders) b.header(k, v)
                 chain.proceed(b.build())
@@ -82,7 +76,7 @@ class ElChavo8TVProvider : MainAPI() {
     }
 
     // ------------------------------------------------------------------
-    // getMainPage: UNA fila por serie (nombre de la serie) con sus temporadas como items
+    // Home: UNA fila por serie con sus temporadas como items (con póster)
     // ------------------------------------------------------------------
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
@@ -96,6 +90,10 @@ class ElChavo8TVProvider : MainAPI() {
             return null
         }
 
+        val seriesPoster = doc.selectFirst("meta[property='og:image']")?.attr("content")
+            ?.takeIf { it.isNotBlank() }
+            ?: doc.selectFirst("img.wp-post-image, article img, .post_thumb img")?.attr("abs:src")
+
         val items = mutableListOf<SearchResponse>()
         val seasonLinks = doc.select("a[href*='temporada-'], a[href*=/temporada/]")
             .map { it.attr("abs:href") }
@@ -105,14 +103,19 @@ class ElChavo8TVProvider : MainAPI() {
         if (seasonLinks.isNotEmpty()) {
             for (u in seasonLinks) {
                 val seasonName = cleanSeasonName(u)
+                Log.d(TAG, "temporada name='$seasonName' url='$u'")
+                // buscar imagen cercana al enlace; si no, póster de la serie
+                val nearImg = doc.selectFirst("a[href='$u'] img")?.attr("abs:src")
+                    ?: doc.selectFirst("a[href*='${u.substringAfterLast("/")}'] img")?.attr("abs:src")
+                val poster = nearImg?.takeIf { it.isNotBlank() } ?: seriesPoster
                 items.add(newTvSeriesSearchResponse(seasonName, u) {
-                    this.posterUrl = null
+                    this.posterUrl = poster
                 })
             }
         } else {
             val pageTitle = doc.selectFirst("h1")?.text()?.trim() ?: request.name
             items.add(newTvSeriesSearchResponse(pageTitle, "$mainUrl/$path") {
-                this.posterUrl = null
+                this.posterUrl = seriesPoster
             })
         }
 
@@ -141,7 +144,7 @@ class ElChavo8TVProvider : MainAPI() {
     }
 
     // ------------------------------------------------------------------
-    // search
+    // search: cards del theme (div.card > .post_title h2 a + img)
     // ------------------------------------------------------------------
 
     override suspend fun search(query: String): List<SearchResponse>? {
@@ -149,14 +152,20 @@ class ElChavo8TVProvider : MainAPI() {
         return try {
             val encoded = URLEncoder.encode(query, "UTF-8")
             val doc = app.get("$mainUrl/?s=$encoded", headers = browserHeaders, timeout = 60L).document
-            val results = doc.select("article.post, article.type-post, h2.entry-title a, h1.entry-title a")
+            val results = doc.select("div.card, article")
                 .mapNotNull { el ->
-                    val a = if (el.tagName() == "a") el else el.selectFirst("a")
-                    if (a == null) return@mapNotNull null
+                    val a = el.selectFirst("div.post_title h2 a")
+                        ?: el.selectFirst(".post_title a")
+                        ?: el.selectFirst("h2 a")
+                        ?: el.selectFirst("a[href*='capitulos'], a[href*='temporada'], a[href*='serie']")
+                        ?: return@mapNotNull null
                     val href = a.attr("abs:href").takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                    val title = a.text().trim().takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+                    var title = a.text().trim()
+                    if (title.isEmpty()) title = el.selectFirst("img")?.attr("alt")?.trim().orEmpty()
+                    if (title.isEmpty()) return@mapNotNull null
+                    val poster = el.selectFirst("img")?.attr("abs:src")?.takeIf { it.isNotBlank() }
                     newTvSeriesSearchResponse(title, href) {
-                        this.posterUrl = null
+                        this.posterUrl = poster
                     }
                 }
                 .distinctBy { it.url }
@@ -171,7 +180,7 @@ class ElChavo8TVProvider : MainAPI() {
     }
 
     // ------------------------------------------------------------------
-    // load: temporada -> episodios (dedupe por id global, renumerados 1..N)
+    // load: temporada -> episodios
     // ------------------------------------------------------------------
 
     override suspend fun load(url: String): LoadResponse? {
@@ -195,7 +204,6 @@ class ElChavo8TVProvider : MainAPI() {
             ?: ""
         val posterUrl = doc.selectFirst("meta[property='og:image']")?.attr("content")
 
-        // id global -> título (primera aparición, que corresponde al Servidor 1)
         val epMap = LinkedHashMap<Int, String>()
         for (el in doc.select("a[href^='javascript:Servidor']")) {
             val m = Regex("""Servidor\w+\((\d+)\)""").find(el.attr("href")) ?: continue
@@ -206,7 +214,6 @@ class ElChavo8TVProvider : MainAPI() {
         }
 
         if (epMap.isEmpty()) {
-            // Página sin episodios (p. ej. película): un solo item
             Log.d(TAG, "load '$title' sin episodios (película) ${System.currentTimeMillis() - t0}ms")
             return newMovieLoadResponse(title, baseUrl, TvType.Movie, baseUrl) {
                 this.posterUrl = posterUrl
@@ -234,7 +241,6 @@ class ElChavo8TVProvider : MainAPI() {
         }
     }
 
-    /** Texto inmediatamente anterior al enlace (saltando <br> y separadores). */
     private fun precedingTitle(el: Element): String? {
         var node = el.previousSibling()
         var hops = 0
@@ -254,9 +260,7 @@ class ElChavo8TVProvider : MainAPI() {
             .trim().ifBlank { s }
 
     // ------------------------------------------------------------------
-    // loadLinks: resuelve SOLO el episodio pulsado (#ep<id>)
-    // Servidor 1 = Byse (pokemonlaserielatino.com/e/...)
-    // Servidor 2 = MP4 directo (media.pokemonlaserielatino.xyz + &tipo=)
+    // loadLinks: MP4 directo (Servidor 2) usando array[epId]
     // ------------------------------------------------------------------
 
     override suspend fun loadLinks(
@@ -271,6 +275,10 @@ class ElChavo8TVProvider : MainAPI() {
         val baseUrl = data.substringBefore("#")
         val wantedId = data.substringAfter("#ep", "").toIntOrNull()
         Log.d(TAG, "loadLinks wantedId=$wantedId")
+        if (wantedId == null) {
+            Log.w(TAG, "loadLinks sin id de episodio (#ep). Nada que resolver.")
+            return false
+        }
 
         val html = try {
             app.get(baseUrl, headers = browserHeaders, timeout = 120L).text
@@ -280,28 +288,35 @@ class ElChavo8TVProvider : MainAPI() {
             return false
         }
         val doc = Jsoup.parse(html, baseUrl)
+        val defaultTipo = inferTipo(baseUrl)
 
-        // Recolecta los enlaces del episodio pulsado
-        val servers = mutableListOf<Pair<String, Int>>()
+        // funciones servidor para el episodio pulsado
+        val funcs = mutableListOf<String>()
         for (el in doc.select("a[href^='javascript:Servidor']")) {
             val m = Regex("""(Servidor\w+)\((\d+)\)""").find(el.attr("href")) ?: continue
             val id = m.groupValues[2].toIntOrNull() ?: continue
-            if (wantedId != null && id != wantedId) continue
-            servers.add(m.groupValues[1] to id)
+            if (id != wantedId) continue
+            val f = m.groupValues[1]
+            if (!funcs.contains(f)) funcs.add(f)
         }
-        Log.d(TAG, "loadLinks servidores del episodio: ${servers.size}")
+        Log.d(TAG, "loadLinks funciones: $funcs defaultTipo=$defaultTipo")
 
         var found = false
-
-        // PASO 1: MP4 directos (entradas con &tipo=)
-        for ((func, id) in servers) {
-            val entry = extractArrayEntry(html, func, id) ?: continue
-            if (!entry.contains("&tipo=")) continue
-            val filePart = entry.substringBefore("&tipo=")
-            val tipo = entry.substringAfter("&tipo=").substringBefore("&")
-            val base = mediaBases[tipo] ?: continue
+        for (func in funcs) {
+            val entry = extractArrayEntry(html, func, wantedId) ?: continue
+            Log.d(TAG, "loadLinks entry[$func]=${entry.take(90)}")
+            if (entry.startsWith("http")) {
+                // Servidor 1 = Byse (frontend con challenge)
+                if (emitByse(entry, baseUrl, subtitleCallback, callback)) found = true
+                continue
+            }
+            // Servidor 2 = MP4 directo (entrada relativa .mp4, con o sin &tipo=)
+            val filePart = entry.substringBefore("&tipo=").trim()
+            if (filePart.isEmpty()) continue
+            val tipo = if (entry.contains("&tipo=")) entry.substringAfter("&tipo=").substringBefore("&").trim() else defaultTipo
+            val base = mediaBases[tipo] ?: mediaBases[defaultTipo] ?: continue
             val mediaUrl = encodePath(base + filePart)
-            Log.d(TAG, "MP4 $func -> $mediaUrl")
+            Log.d(TAG, "MP4[$func] tipo=$tipo -> ${mediaUrl.take(140)}")
             callback(newExtractorLink(name, "$func MP4", mediaUrl, ExtractorLinkType.VIDEO) {
                 this.referer = MEDIA_REFERER
                 this.headers = mediaHeaders
@@ -310,37 +325,70 @@ class ElChavo8TVProvider : MainAPI() {
             found = true
         }
 
-        // PASO 2: Byse (entradas http://.../e/...)
-        for ((func, id) in servers) {
-            val entry = extractArrayEntry(html, func, id) ?: continue
-            if (!entry.startsWith("http")) continue
-            val collected = mutableListOf<ExtractorLink>()
-            val collector: (ExtractorLink) -> Unit = { collected.add(it) }
-            try {
-                withTimeout(15_000L) { fetchByseLinks(entry, baseUrl, subtitleCallback, collector) }
-            } catch (e: TimeoutCancellationException) {
-                Log.w(TAG, "Byse timeout para $func($id)")
-                continue
-            }
-            for (link in collected) {
-                callback(newExtractorLink(name, "$func Byse", link.url) {
-                    this.referer = link.referer ?: baseUrl
-                    this.quality = link.quality
-                    this.type = if (link.isM3u8) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-                    this.headers = link.headers
-                })
-            }
-            if (collected.isNotEmpty()) found = true
-        }
-
         Log.d(TAG, "loadLinks $baseUrl -> ${if (found) "OK" else "SIN LINKS"} ${System.currentTimeMillis() - t0}ms")
         return found
     }
 
-    /** Extrae array[index] del script `function <func>(id) { var urls = [...]; }`. */
+    /** Servidor 1: Byse frontend (challenge/attestation) via ByseHttpExtractor. */
+    private suspend fun emitByse(
+        embedUrl: String,
+        pageUrl: String,
+        subtitleCallback: (SubtitleFile) -> Unit,
+        callback: (ExtractorLink) -> Unit
+    ): Boolean {
+        Log.d(TAG, "[Byse] embed=$embedUrl")
+        val html = try {
+            app.get(embedUrl, headers = browserHeaders + ("Referer" to pageUrl), timeout = 20L).text
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Log.w(TAG, "[Byse] embed falló: ${e.message}")
+            return false
+        }
+        if (!html.contains("Byse Frontend")) {
+            Log.d(TAG, "[Byse] no es Byse Frontend")
+            return false
+        }
+        return try {
+            val hubHost = runCatching { "https://${java.net.URI(pageUrl).host}" }.getOrDefault(mainUrl)
+            val sources = ByseHttpExtractor().extract(embedUrl, pageUrl, hubHost)
+            Log.d(TAG, "[Byse] sources=${sources.size}")
+            var ok = false
+            for (s in sources) {
+                for (sub in s.subtitles) subtitleCallback(sub)
+                val isHls = s.url.contains(".m3u8")
+                callback(newExtractorLink(name, "Servidor 1 Byse", s.url, if (isHls) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO) {
+                    this.referer = hubHost
+                    this.headers = browserHeaders + ("Referer" to pageUrl)
+                    this.quality = Qualities.Unknown.value
+                })
+                ok = true
+            }
+            ok
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Log.w(TAG, "[Byse] error: ${e.message}")
+            false
+        }
+    }
+
+    private fun inferTipo(url: String): String {
+        val l = url.lowercase()
+        return when {
+            l.contains("chapulin-colorado-animado") -> "chapulinanimado"
+            l.contains("chapulin-colorado") -> "chapulinreal"
+            l.contains("chavo-animado") || l.contains("chavo-del-8-animado") -> "animado"
+            l.contains("chespirito") -> "chespirito"
+            l.contains("sin-querer") || l.contains("sinquerer") -> "sinquererqueriendo"
+            l.contains("chanfle") -> "Pelis"
+            l.contains("kiko") -> "kiko"
+            else -> "chavo"
+        }
+    }
+
     private fun extractArrayEntry(html: String, funcName: String, index: Int): String? {
         val pat = Regex("function\\s+" + Regex.escape(funcName) + "\\s*\\(id\\)\\s*\\{[\\s\\S]*?var\\s+urls\\s*=\\s*\\[([\\s\\S]*?)\\];")
-        val match = pat.findAll(html).lastOrNull() ?: run {
+        val match = pat.findAll(html).lastOrNull()
+        if (match == null) {
             Log.d(TAG, "extractArrayEntry: no array para $funcName")
             return null
         }
@@ -364,39 +412,5 @@ class ElChavo8TVProvider : MainAPI() {
             }
         }
         return sb.toString()
-    }
-
-    /** Lógica inline de Byse: POST a bysedikamoum.com/api/source */
-    private suspend fun fetchByseLinks(
-        url: String,
-        referer: String?,
-        subtitleCallback: (SubtitleFile) -> Unit,
-        callback: (ExtractorLink) -> Unit
-    ) {
-        val videoId = Regex("""/e/(\w+)""").find(url)?.groupValues?.get(1) ?: return
-        try {
-            val apiRes = app.post(
-                BYSE_API,
-                headers = mapOf(
-                    "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                    "Referer" to url,
-                    "Origin" to "https://bysedikamoum.com",
-                ),
-                referer = url,
-                requestBody = FormBody.Builder().add("r", "").add("s", videoId).build()
-            )
-            val text = apiRes.text
-            val fileUrl = Regex("""file["']\s*:\s*["']([^"']+)["']""").find(text)?.groupValues?.get(1)
-                ?: Regex("""url["']\s*:\s*["']([^"']+)["']""").find(text)?.groupValues?.get(1)
-                ?: return
-            callback.invoke(newExtractorLink("Byse", "Byse", fileUrl) {
-                this.referer = "https://bysedikamoum.com"
-                this.quality = Qualities.Unknown.value
-                this.type = if (fileUrl.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO
-            })
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            Log.w(TAG, "[Byse] error: ${e.message}")
-        }
     }
 }

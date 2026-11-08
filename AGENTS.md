@@ -4134,3 +4134,47 @@ Cascada de 3 fases (timeout total 60000ms):
 - `build.gradle.kts` y `plugins.json` a **v4**; `fileSize` pendiente tras compilar.
 - Compilacion: pendiente por el usuario (`.\gradlew.bat :ElChavo8TVProvider:make --console=plain -q`). **No compilado por regla del repo.**
 - â¸ï¸ Pendiente: probar en dispositivo un capÃ­tulo de El ChapulÃ­n T1 (deben salir 2 links: `Servidor1ChespTV Byse` y `Servidor2ChespTV MP4`), y verificar home con 7 filas de serie y temporadas dentro.
+
+
+## ElChavo8TVProvider â€” Byse muerto, solo MP4 directo + search cards + posters (08 Nov 2026 v5)
+### Hallazgos verificados (08 Nov)
+- **Byse (Servidor 1) MUERTO para estos IDs**: `POST bysedikamoum.com/api/source` con `s=sjlp62u3lsfw` -> **404 page not found**. La nueva Byse usa challenge/attestation (ByseHttpExtractor), no el API simple. Se descarta Servidor 1 (`.../e/...`).
+- **Servidor 2 (MP4 directo) SIRVE**: `media.pokemonlaserielatino.xyz/Series/.../<tipo>/<ruta>.mp4` -> **200 video/mp4** con `Referer: https://pokemonlaserielatino.xyz/`. Verificado Chavo T1971-72 ep1 (32 MB) y Chapulin T1 ep1.
+- **Entradas de Servidor 2 a veces SIN `&tipo=`** (Chavo original): hay que inferir el tipo desde la URL de la temporada (`inferTipo`). Las de animado/chapulin/chespirito/kiko/Pelis sÃ­ traen `&tipo=`.
+- **Search**: el theme usa `div.card` con `div.post_title h2 a` (href+tÃ­tulo) e `img` (pÃ³ster). El selector anterior (`article.post`, `entry-title`) daba 0.
+- **Posters home**: se usa `og:image` de la pÃ¡gina de la serie (y `img` cercana al enlace de temporada si existe) como pÃ³ster de cada card de temporada.
+
+### Fix v5
+- `loadLinks`: descarta entradas `http` (Byse) y emite **solo MP4 directo** (entradas relativas `.mp4`), tipo por `&tipo=` o inferido. `getVideoInterceptor` inyecta UA+Referer+Origin a `pokemonlaserielatino` (MP4 y range requests).
+- `search`: `div.card` -> `.post_title h2 a` + `img`; dedupe por url, tope 40.
+- Home: pÃ³ster por temporada (og:image de la serie / img cercana).
+
+### Estado v5
+- `build.gradle.kts` y `plugins.json` a **v5**; `fileSize` pendiente tras compilar.
+- Compilacion: pendiente por el usuario (`.\gradlew.bat :ElChavo8TVProvider:make --console=plain -q`). **No compilado por regla del repo.**
+- â¸ï¸ Pendiente: probar en dispositivo un capitulo (esperado `MP4[Servidor2ChespTV] tipo=... -> ...mp4` y reproduccion), home con posters y search con resultados.
+
+
+## ElChavo8TVProvider â€” Servidor 1 (Byse) reactivado con ByseHttpExtractor (08 Nov 2026 v6)
+- **Aclaracion del usuario**: en la web **ambas opciones** (Servidor 1 y Servidor 2) reproducen. Servidor 1 NO usa el concat de media; redirige a `elchavodel8tv-haz-clic-para-reproducir/?UrlPok=<byse embed>` (player Byse real). El API simple `bysedikamoum/api/source` da 404; se requiere el frontend Byse con challenge.
+- **Fix v6**: se copiÃ³ `ByseExtractor.kt` (17 KB, autocontenido: Jackson + OkHttp propio + JCA) desde VeranimeProvider al modulo. Nueva `emitByse()` en el provider (patron de VerAnime): fetch del embed, exige `Byse Frontend`, `ByseHttpExtractor().extract(embedUrl, pageUrl, host)` -> emite sources + subtÃ­tulos con `source=name`.
+- `loadLinks`: entradas `http` -> `emitByse` (Servidor 1); entradas relativas `.mp4` -> MP4 directo (Servidor 2). **Se emiten ambas** para que OpciÃ³n 1 y 2 funcionen.
+- Versiones a **6** (`build.gradle.kts` + `plugins.json`); `fileSize` pendiente.
+- Compilacion: pendiente por el usuario (`.\gradlew.bat :ElChavo8TVProvider:make --console=plain -q`). **No compilado por regla del repo.**
+- â¸ï¸ Pendiente: probar en dispositivo un capitulo; esperar 2 links (`Servidor 1 Byse` y `Servidor2ChespTV MP4`) y reproduccion en ambos.
+
+## ElChavo8TVProvider — ByseExtractor requiere JVM 11 (08 Nov 2026 v6)
+- Al copiar ByseExtractor.kt (usa AppUtils.parseJson, inline JVM 11) en un módulo con el JVM target 1.8 del root, la clase ByseHttpExtractor queda sin compilar -> Unresolved reference 'ByseHttpExtractor' y los iterator() is ambiguous en cascada.
+- **Fix**: ElChavo8TVProvider/build.gradle.kts ahora fija kotlin { compilerOptions { jvmTarget.set(JVM_11) } } dentro de cloudstream {} (mismo patron que SerieskaoProvider, que compila). El build usa compileDebugKotlin + compileDex (sin Java), asi que no hay mismatch de target.
+- **Importante**: tras agregar el archivo nuevo, correr build LIMPIO para que el compilador incremental lo tome: .\gradlew.bat :ElChavo8TVProvider:clean :ElChavo8TVProvider:make --console=plain -q.
+- Si aun asi ByseHttpExtractor no resuelve, plan B: eliminar ByseExtractor.kt + emitByse y quedarse solo con Servidor 2 (MP4 directo), que compila sin JVM 11.
+
+## ElChavo8TVProvider — Fix real JVM 11 para ByseExtractor (08 Nov 2026 v6)
+- **Verificado por bytecode**: com/lagradost/cloudstream3/utils/AppUtils.class en el jar de CloudStream es **major 55 (JVM 11)**; parseJson es inline JVM 11.
+- **Root** (uild.gradle.kts lineas 53-69) fuerza en TODOS los subproyectos: compileOptions Java 1.8 y 	asks.withType<KotlinJvmCompile> jvmTarget=JVM_1_8. Por eso ByseExtractor.kt (usa parseJson) falla con "Cannot inline bytecode built with JVM target 11 into ... 1.8" -> ByseHttpExtractor queda Unresolved y los iterator() ambiguos son cascada.
+- El bloque kotlin { compilerOptions { jvmTarget=JVM_11 } } DENTRO de cloudstream {} NO basta (no sobreescribe el 	asks.withType<KotlinJvmCompile> del root).
+- **Fix correcto (patron YoutubeProvider)**: en ElChavo8TVProvider/build.gradle.kts, a nivel de modulo, alinear Java y Kotlin a 11:
+  - ndroid { compileOptions { sourceCompatibility/targetCompatibility = JavaVersion.VERSION_11 } }
+  - 	asks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile>().configureEach { compilerOptions.jvmTarget.set(JVM_11) }
+- **Obligatorio build limpio** tras agregar el archivo nuevo: .\gradlew.bat :ElChavo8TVProvider:clean :ElChavo8TVProvider:make --console=plain -q.
+- Plan B si aun falla: eliminar ByseExtractor.kt + emitByse y dejar solo Servidor 2 (MP4 directo), que compila a JVM 1.8.
