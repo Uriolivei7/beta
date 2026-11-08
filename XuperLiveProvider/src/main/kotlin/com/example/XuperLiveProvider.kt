@@ -113,9 +113,56 @@ class XuperLiveProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse>? {
-        Log.d(TAG, "search() llamado: '$query'")
-        Log.w(TAG, "search: TV en vivo no tiene búsqueda")
-        return null
+        Log.d(TAG, "search() local llamado para: '$query'")
+        return try {
+            val data = apiCall("live") ?: return null
+            val results = filterChannels(data, query)
+            Log.d(TAG, "search local '$query' -> ${results.size} canales encontrados")
+            results
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Log.w(TAG, "search local falló: ${e.message}", e)
+            null
+        }
+    }
+
+    private fun filterChannels(data: Any?, query: String): List<SearchResponse> {
+        val items = mutableListOf<SearchResponse>()
+        if (data == null || query.isBlank()) return items
+
+        try {
+            val rowsArray = when (data) {
+                is org.json.JSONArray -> data
+                is org.json.JSONObject -> data.optJSONArray("data") ?: org.json.JSONArray()
+                else -> return items
+            }
+
+            val cleanQuery = query.trim().lowercase()
+
+            for (i in 0 until rowsArray.length()) {
+                val row = rowsArray.optJSONObject(i) ?: continue
+                val channelItems = row.optJSONArray("items") ?: continue
+
+                for (j in 0 until channelItems.length()) {
+                    val ch = channelItems.optJSONObject(j) ?: continue
+                    val id = ch.optString("id", ch.optString("channelCode", ""))
+                    val title = ch.optString("title", ch.optString("name", ""))
+                    val poster = ch.optString("poster", ch.optString("logo", ""))
+
+                    // Verificamos si el nombre del canal contiene la búsqueda del usuario
+                    if (id.isNotEmpty() && title.isNotEmpty() && title.lowercase().contains(cleanQuery)) {
+                        items.add(newTvSeriesSearchResponse(title, "$mainUrl/channel/$id", TvType.Live) {
+                            this.posterUrl = if (poster.isNotEmpty()) poster else null
+                        })
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "filterChannels falló: ${e.message}", e)
+        }
+
+        // Eliminamos duplicados por si el mismo canal aparece en múltiples listas
+        return items.distinctBy { it.url }
     }
 
     override suspend fun load(url: String): LoadResponse? {

@@ -197,24 +197,32 @@ class XuperVODProvider : MainAPI() {
     private suspend fun parseDetail(json: org.json.JSONObject?, id: String, type: String, url: String): LoadResponse? {
         if (json == null) return null
         val title = json.optString("title", json.optString("name", ""))
-        val description = json.optString("description", json.optString("plot", ""))
+        val description = json.optString("description", json.optString("plot", json.optString("overview", "")))
         val poster = json.optString("poster", json.optString("image", ""))
         val year = json.optString("year", "")
 
         val episodes = mutableListOf<Episode>()
         val seasons = json.optJSONArray("seasons")
+
+        Log.d(TAG, "parseDetail -> Título: $title, Temporadas encontradas: ${seasons?.length() ?: 0}")
+
         if (seasons != null) {
             for (s in 0 until seasons.length()) {
                 val season = seasons.optJSONObject(s) ?: continue
-                val seasonNum = season.optInt("season", s + 1)
+
+                val seasonNum = season.optInt("season", season.optInt("season_number", s + 1))
                 val eps = season.optJSONArray("episodes") ?: continue
+
+                Log.d(TAG, "Temporada $seasonNum tiene ${eps.length()} episodios")
+
                 for (e in 0 until eps.length()) {
                     val ep = eps.optJSONObject(e) ?: continue
-                    val epId = ep.optString("id", "")
-                    val epTitle = ep.optString("title", "Episodio ${e + 1}")
-                    val epNum = ep.optInt("number", e + 1)
-                    val epPoster = ep.optString("poster", "")
-                    val epDesc = ep.optString("description", "")
+                    val epId = ep.optString("id", ep.optString("contentId", ""))
+                    val epTitle = ep.optString("title", ep.optString("name", "Episodio ${e + 1}"))
+                    val epNum = ep.optInt("number", ep.optInt("episode_number", e + 1))
+                    val epPoster = ep.optString("poster", ep.optString("image", ""))
+                    val epDesc = ep.optString("description", ep.optString("overview", ""))
+
                     episodes.add(newEpisode("$mainUrl/detail/$epId/episode") {
                         this.name = epTitle
                         this.season = seasonNum
@@ -226,8 +234,29 @@ class XuperVODProvider : MainAPI() {
             }
         }
 
-        // Si es una película y no tiene episodios, se devuelve como película
-        if (type.lowercase() == "movie" || episodes.isEmpty()) {
+        val flatEpisodes = json.optJSONArray("episodes")
+        if (episodes.isEmpty() && flatEpisodes != null) {
+            for (e in 0 until flatEpisodes.length()) {
+                val ep = flatEpisodes.optJSONObject(e) ?: continue
+                val epId = ep.optString("id", "")
+                val epTitle = ep.optString("title", "Episodio ${e + 1}")
+                val epNum = ep.optInt("number", e + 1)
+                val epPoster = ep.optString("poster", "")
+                val epDesc = ep.optString("description", "")
+
+                episodes.add(newEpisode("$mainUrl/detail/$epId/episode") {
+                    this.name = epTitle
+                    this.season = ep.optInt("season", 1)
+                    this.episode = epNum
+                    this.posterUrl = if (epPoster.isNotEmpty()) epPoster else null
+                    this.description = if (epDesc.isNotEmpty()) epDesc else null
+                })
+            }
+        }
+
+        val finalType = if (type.lowercase() == "movie" && episodes.isEmpty()) TvType.Movie else mapTvType(type)
+
+        if (finalType == TvType.Movie) {
             return newMovieLoadResponse(title, url, TvType.Movie, url) {
                 this.posterUrl = if (poster.isNotEmpty()) poster else null
                 this.plot = if (description.isNotEmpty()) description else null
@@ -235,7 +264,7 @@ class XuperVODProvider : MainAPI() {
             }
         }
 
-        return newTvSeriesLoadResponse(title, url, mapTvType(type), episodes) {
+        return newTvSeriesLoadResponse(title, url, finalType, episodes) {
             this.posterUrl = if (poster.isNotEmpty()) poster else null
             this.plot = if (description.isNotEmpty()) description else null
             this.year = if (year.isNotEmpty()) year.toIntOrNull() else null
