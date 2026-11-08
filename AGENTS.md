@@ -4031,3 +4031,48 @@ Cascada de 3 fases (timeout total 60000ms):
 ### Estado
 - No compilado por regla del repo. Comando: .\gradlew.bat :ElChavo8TVProvider:make --console=plain -q
 - ⏸️ Pendiente: compilar, actualizar fileSize, instalar y probar. Logs: db logcat -s ElChavo8TV:V buscando loadLinks video URL: y loadLinks ... -> OK.
+
+## XuperVODProvider — Plugin nuevo (07 Nov 2026 v1)
+### Sitio
+- https://modlyo.com/magis-web/ — Magis/Xuper con contenido VOD (películas y series) y TV en vivo
+- Requiere sesión (anonima o con cuenta) para acceder al catálogo
+- Implementación de referencia en lordmacu/kino-light (com.arkiv.player.data.magis/)
+
+### Arquitectura (dos plugins separados)
+| Plugin | tvTypes | Enfoque |
+|--------|---------|---------|
+| XuperVODProvider | Movie, TvSeries, Anime | Biblioteca VOD: catalogo, busqueda, detalle, resolucion de streams |
+| XuperLiveProvider | Live | TV en vivo: lista de canales, resolucion de streams M3U8/MP4 |
+
+### Archivos XuperVODProvider
+- XuperVODProvider/build.gradle.kts (v1, es, Movie+TvSeries+Anime)
+- XuperVODProvider/src/main/AndroidManifest.xml
+- XuperVODProvider/src/main/kotlin/com/example/XuperVODPlugin.kt
+- XuperVODProvider/src/main/kotlin/com/example/XuperVODProvider.kt
+- plugins.json: entrada XuperVOD v1 (fileSize: 0 pendiente)
+- AGENTS.md: esta seccion
+
+### Archivos XuperLiveProvider
+- XuperLiveProvider/build.gradle.kts (v1, es, Live)
+- XuperLiveProvider/src/main/AndroidManifest.xml
+- XuperLiveProvider/src/main/kotlin/com/example/XuperLivePlugin.kt
+- XuperLiveProvider/src/main/kotlin/com/example/XuperLiveProvider.kt
+- plugins.json: entrada XuperLive v1 (fileSize: 0 pendiente)
+- AGENTS.md: esta seccion
+
+### Estado
+- ✅ Estructuras creadas para ambos plugins
+- ✅ mainPageOf definido con secciones iniciales (Descubrir/Biblioteca para VOD, TV en Vivo para Live)
+- ✅ search, load, loadLinks con stubs que emiten logs de diagnostico
+- ⏸️ Pendiente: definir endpoints reales de modlyo.com/magis-web/ para catalogo VOD, busqueda, detalle y resolucion de streams
+- ⏸️ Pendiente: definir endpoints de TV en vivo (lista de canales, resolucion de streams, posible firma de segmentos)
+- ⏸️ Pendiente: criptografia propietaria (TweakedMd5 / signO3) para firmar segmentos de live stream
+- ⏸️ Pendiente: gestion de sesiones (v3/snToken, v8/active, v8/login)
+- Compilacion: pendiente por el usuario (.\gradlew.bat :XuperVODProvider:make --console=plain -q y :XuperLiveProvider:make --console=plain -q) — no compilado por regla del repo.
+
+## Notas de implementacion (basado en lordmacu/kino-light)
+- Session Modes: Anonymous (v3/snToken + v8/active) y Account (v8/login)
+- Criptografia: TweakedMd5 con metodo signO3 para firmar segmentos de live stream
+- Capas: criptografia → HTTP transport → sesion → catalogo/resolucion
+- Desafio geo: puede requerir VPN/proxy si el ISP bloquea el acceso a Magis/Xuper
+- Live TV: requiere cuenta; anonymous solo da acceso a catalogo VOD
