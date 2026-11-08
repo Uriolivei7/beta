@@ -12,7 +12,7 @@ class XuperLiveProvider : MainAPI() {
         private const val TAG = "XuperLive"
     }
 
-    override var mainUrl = "https://modlyo.com/magis_web"
+    override var mainUrl = "https://modlyo.com/magis_web/"
     override var name = "XuperLive"
     override val supportedTypes = setOf(TvType.Live)
     override var lang = "es"
@@ -51,13 +51,23 @@ class XuperLiveProvider : MainAPI() {
         }
     }
 
-    private fun buildQueryString(action: String, params: Map<String, Any>?): String {
+    private fun buildQueryString(action: String, params: Map<String, Any>? = null): String {
         val sb = StringBuilder("action=$action")
         if (params != null) {
             for ((k, v) in params) {
                 sb.append("&$k=")
                 sb.append(java.net.URLEncoder.encode(v.toString(), "UTF-8"))
             }
+        }
+        return sb.toString()
+    }
+
+    private fun joinStrings(list: org.json.JSONArray?, sep: String): String {
+        if (list == null) return ""
+        val sb = StringBuilder()
+        for (i in 0 until list.length()) {
+            if (i > 0) sb.append(sep)
+            sb.append(list.optString(i, ""))
         }
         return sb.toString()
     }
@@ -95,8 +105,6 @@ class XuperLiveProvider : MainAPI() {
                 val country = ch.optString("country", "")
                 items.add(newTvSeriesSearchResponse(title, "$mainUrl/channel/$id", TvType.Live) {
                     this.posterUrl = if (poster.isNotEmpty()) poster else null
-                    //this.plot = if (category.isNotEmpty()) category else null
-                    //this.tags = if (country.isNotEmpty()) listOf(country) else null
                 })
             }
         } catch (e: Exception) {
@@ -174,13 +182,13 @@ class XuperLiveProvider : MainAPI() {
     private fun parseStream(data: org.json.JSONObject?): StreamInfo? {
         if (data == null) return null
         try {
-            val streams = data.optJSONArray("streams") ?: data.optJSONArray("sources") ?: return null
+            val json = data
+            val streams = json.optJSONArray("streams") ?: json.optJSONArray("sources") ?: return null
             val s = streams.optJSONObject(0) ?: return null
             val url = s.optString("url", "")
             val label = s.optString("label", "TV en Vivo")
             val streamType = s.optString("type", "hls")
             if (url.isEmpty()) return null
-
             return StreamInfo(
                 label = label,
                 url = url,
@@ -188,7 +196,7 @@ class XuperLiveProvider : MainAPI() {
                 quality = mapQuality(label)
             )
         } catch (e: Exception) {
-            Log.w(TAG, "parseStream falló: ${e.message}", e)
+            Log.w(TAG, "parseStream falló: ${e.message}")
             return null
         }
     }

@@ -12,7 +12,7 @@ class XuperVODProvider : MainAPI() {
         private const val TAG = "XuperVOD"
     }
 
-    override var mainUrl = "https://modlyo.com/magis_web"
+    override var mainUrl = "https://modlyo.com/magis_web/"
     override var name = "XuperVOD"
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie)
     override var lang = "es"
@@ -51,13 +51,23 @@ class XuperVODProvider : MainAPI() {
         }
     }
 
-    private fun buildQueryString(action: String, params: Map<String, Any>?): String {
+    private fun buildQueryString(action: String, params: Map<String, Any>? = null): String {
         val sb = StringBuilder("action=$action")
         if (params != null) {
             for ((k, v) in params) {
                 sb.append("&$k=")
                 sb.append(java.net.URLEncoder.encode(v.toString(), "UTF-8"))
             }
+        }
+        return sb.toString()
+    }
+
+    private fun joinStrings(list: org.json.JSONArray?, sep: String): String {
+        if (list == null) return ""
+        val sb = StringBuilder()
+        for (i in 0 until list.length()) {
+            if (i > 0) sb.append(sep)
+            sb.append(list.optString(i, ""))
         }
         return sb.toString()
     }
@@ -86,35 +96,28 @@ class XuperVODProvider : MainAPI() {
         val items = mutableListOf<SearchResponse>()
         if (data == null) return items
         try {
-            val rows = data.optJSONArray("rows") ?: data.optJSONArray("items") ?: return items
-            for (i in 0 until rows.length()) {
-                val row = rows.optJSONObject(i) ?: continue
+            val rowsArray = data.optJSONArray("data") ?: return items
+            for (i in 0 until rowsArray.length()) {
+                val row = rowsArray.optJSONObject(i) ?: continue
                 val rowItems = row.optJSONArray("items") ?: continue
                 for (j in 0 until rowItems.length()) {
                     val item = rowItems.optJSONObject(j) ?: continue
                     val id = item.optString("id", "")
-                    val title = item.optString("title", "")
-                    val type = item.optString("type", "movie")
-                    val poster = item.optString("poster", "")
+                    val title = item.optString("title", item.optString("name", ""))
+                    val type = item.optString("type", item.optString("media_type", "movie"))
+                    val poster = item.optString("poster", item.optString("image", ""))
+                    val backdrop = item.optString("backdrop", "")
+                    val description = item.optString("description", "")
                     val year = item.optString("year", "")
-
                     val genresArray = item.optJSONArray("genres")
-                    val genresList = mutableListOf<String>()
-                    if (genresArray != null) {
-                        for (g in 0 until genresArray.length()) {
-                            genresList.add(genresArray.optString(g))
-                        }
-                    }
-                    val genres = genresList.joinToString(",")
-
+                    val genres = if (genresArray != null) joinStrings(genresArray, ",") else ""
                     items.add(newTvSeriesSearchResponse(title, "$mainUrl/detail/$id/$type", mapTvType(type)) {
                         this.posterUrl = if (poster.isNotEmpty()) poster else null
-                        this.year = if (year.isNotEmpty()) year.toIntOrNull() else null
                     })
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "parseHomeItems falló: ${e.message}", e)
+            Log.w(TAG, "parseHomeItems falló: ${e.message}")
         }
         return items
     }
@@ -145,13 +148,13 @@ class XuperVODProvider : MainAPI() {
         val items = mutableListOf<SearchResponse>()
         if (data == null) return items
         try {
-            val json = data.optJSONArray("results") ?: return items
+            val json = data.optJSONArray("results") ?: data.optJSONArray("data") ?: return items
             for (i in 0 until json.length()) {
                 val item = json.optJSONObject(i) ?: continue
                 val id = item.optString("id", "")
-                val title = item.optString("title", "")
-                val type = item.optString("type", "movie")
-                val poster = item.optString("poster", "")
+                val title = item.optString("title", item.optString("name", ""))
+                val type = item.optString("type", item.optString("media_type", "movie"))
+                val poster = item.optString("poster", item.optString("image", ""))
                 items.add(newTvSeriesSearchResponse(title, "$mainUrl/detail/$id/$type", mapTvType(type)) {
                     this.posterUrl = if (poster.isNotEmpty()) poster else null
                 })
@@ -170,7 +173,7 @@ class XuperVODProvider : MainAPI() {
         val type = parts[1]
         return try {
             val meta = apiCall("meta", mapOf("id" to id)) ?: return null
-            parseDetail(meta, id, type)
+            parseDetail(meta, id, type, url)
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             Log.w(TAG, "load falló: ${e.message}")
@@ -178,22 +181,16 @@ class XuperVODProvider : MainAPI() {
         }
     }
 
-    private suspend fun parseDetail(data: org.json.JSONObject?, url: String, type: String): LoadResponse? {
+    private suspend fun parseDetail(data: org.json.JSONObject?, id: String, type: String, url: String): LoadResponse? {
         val json = data ?: return null
         val title = json.optString("title", "")
         val description = json.optString("description", json.optString("plot", ""))
         val poster = json.optString("poster", "")
+        val backdrop = json.optString("backdrop", "")
         val year = json.optString("year", "")
-        val rating = json.optDouble("rating", 0.0)
-
         val genresArray = json.optJSONArray("genres")
-        val genresList = mutableListOf<String>()
-        if (genresArray != null) {
-            for (g in 0 until genresArray.length()) {
-                genresList.add(genresArray.optString(g))
-            }
-        }
-        val genres = genresList.joinToString(",")
+        val genres = if (genresArray != null) joinStrings(genresArray, ",") else ""
+        val rating = json.optDouble("rating", 0.0)
 
         val episodes = mutableListOf<Episode>()
         val seasons = json.optJSONArray("seasons")
@@ -209,7 +206,6 @@ class XuperVODProvider : MainAPI() {
                     val epNum = ep.optInt("number", e + 1)
                     val epPoster = ep.optString("poster", "")
                     val epDesc = ep.optString("description", "")
-
                     episodes.add(newEpisode("$mainUrl/detail/$epId/episode") {
                         this.name = epTitle
                         this.season = seasonNum
@@ -224,9 +220,7 @@ class XuperVODProvider : MainAPI() {
         return newTvSeriesLoadResponse(title, url, mapTvType(type), episodes) {
             this.posterUrl = if (poster.isNotEmpty()) poster else null
             this.plot = if (description.isNotEmpty()) description else null
-            this.tags = if (genres.isNotEmpty()) genres.split(",") else null
             this.year = if (year.isNotEmpty()) year.toIntOrNull() else null
-            //this.score = (rating * 10).toInt()
         }
     }
 
