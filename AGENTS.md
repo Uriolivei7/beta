@@ -4178,3 +4178,11 @@ Cascada de 3 fases (timeout total 60000ms):
   - 	asks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile>().configureEach { compilerOptions.jvmTarget.set(JVM_11) }
 - **Obligatorio build limpio** tras agregar el archivo nuevo: .\gradlew.bat :ElChavo8TVProvider:clean :ElChavo8TVProvider:make --console=plain -q.
 - Plan B si aun falla: eliminar ByseExtractor.kt + emitByse y dejar solo Servidor 2 (MP4 directo), que compila a JVM 1.8.
+
+## ElChavo8TVProvider — Fix nombres con slash final + search paginado (08 Nov 2026 v7)
+- **Byse + MP4 verificados funcionando en dispositivo** ([Byse] sources=1 + MP4[...] + loadLinks -> OK). Gracias al fix JVM 11 (root fuerza 1.8, AppUtils es JVM 11; se alineo Java+Kotlin a 11 en el modulo).
+- **Bug nombres home**: las temporadas del Chavo y Chapulin Animado usan URLs que **terminan en /** (ej. /temporada-1971-1972-el-chavo-del-8-latino/), por lo que url.substringAfterLast("/") daba "" -> fallback a la URL. Las de Chapulin/Chespirito usan .html y sí funcionaban. **Fix**: cleanSeasonName ahora hace url.substringBefore("?").trimEnd('/') antes de sacar el slug.
+- **Bug search (solo pagina 1)**: el search de WordPress pagina con /page/N/?s=. Ahora search() recorre paginas 1..6 (o hasta que una pagina no aporte nuevos URLs), dedupe por url, tope 60. parseSearchDoc() separado.
+- Versiones a **7** (uild.gradle.kts + plugins.json); ileSize pendiente.
+- Compilacion: pendiente por el usuario (.\gradlew.bat :ElChavo8TVProvider:clean :ElChavo8TVProvider:make --console=plain -q). **No compilado por regla del repo.**
+- ⏸️ Pendiente: probar home del Chavo (nombres "Temporada YYYY" en vez de URL) y search "chapulin" (debe traer varias paginas, ej. ~30+ resultados).

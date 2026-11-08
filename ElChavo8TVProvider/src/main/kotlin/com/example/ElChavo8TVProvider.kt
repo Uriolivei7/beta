@@ -124,7 +124,8 @@ class ElChavo8TVProvider : MainAPI() {
     }
 
     private fun cleanSeasonName(url: String): String {
-        val slug = url.substringAfterLast("/").substringBefore("?").removeSuffix(".html")
+        val path = url.substringBefore("?").trimEnd('/')
+        val slug = path.substringAfterLast("/").removeSuffix(".html")
         val lower = slug.lowercase()
         val idx = lower.indexOf("temporada")
         if (idx >= 0) {
@@ -151,32 +152,56 @@ class ElChavo8TVProvider : MainAPI() {
         Log.d(TAG, "search() llamado: '$query'")
         return try {
             val encoded = URLEncoder.encode(query, "UTF-8")
-            val doc = app.get("$mainUrl/?s=$encoded", headers = browserHeaders, timeout = 60L).document
-            val results = doc.select("div.card, article")
-                .mapNotNull { el ->
-                    val a = el.selectFirst("div.post_title h2 a")
-                        ?: el.selectFirst(".post_title a")
-                        ?: el.selectFirst("h2 a")
-                        ?: el.selectFirst("a[href*='capitulos'], a[href*='temporada'], a[href*='serie']")
-                        ?: return@mapNotNull null
-                    val href = a.attr("abs:href").takeIf { it.isNotBlank() } ?: return@mapNotNull null
-                    var title = a.text().trim()
-                    if (title.isEmpty()) title = el.selectFirst("img")?.attr("alt")?.trim().orEmpty()
-                    if (title.isEmpty()) return@mapNotNull null
-                    val poster = el.selectFirst("img")?.attr("abs:src")?.takeIf { it.isNotBlank() }
-                    newTvSeriesSearchResponse(title, href) {
-                        this.posterUrl = poster
+            val out = LinkedHashMap<String, SearchResponse>()
+            var page = 1
+            while (page <= 6 && out.size < 60) {
+                val pageUrl = if (page == 1) "$mainUrl/?s=$encoded" else "$mainUrl/page/$page/?s=$encoded"
+                val doc = try {
+                    app.get(pageUrl, headers = browserHeaders, timeout = 60L).document
+                } catch (e: Exception) {
+                    if (e is CancellationException) throw e
+                    Log.w(TAG, "search page $page falló: ${e.message}")
+                    break
+                }
+                val found = parseSearchDoc(doc)
+                var added = 0
+                for (r in found) {
+                    if (!out.containsKey(r.url)) {
+                        out[r.url] = r
+                        added++
                     }
                 }
-                .distinctBy { it.url }
-                .take(40)
-            Log.d(TAG, "search '$query' -> ${results.size} resultados")
-            results
+                Log.d(TAG, "search page $page -> ${found.size} cards, nuevos=$added, total=${out.size}")
+                if (added == 0) break
+                page++
+            }
+            Log.d(TAG, "search '$query' -> ${out.size} resultados totales")
+            out.values.toList()
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             Log.w(TAG, "search falló: ${e.message}")
             null
         }
+    }
+
+    private fun parseSearchDoc(doc: org.jsoup.nodes.Document): List<SearchResponse> {
+        return doc.select("div.card, article")
+            .mapNotNull { el ->
+                val a = el.selectFirst("div.post_title h2 a")
+                    ?: el.selectFirst(".post_title a")
+                    ?: el.selectFirst("h2 a")
+                    ?: el.selectFirst("a[href*='capitulos'], a[href*='temporada'], a[href*='serie']")
+                    ?: return@mapNotNull null
+                val href = a.attr("abs:href").takeIf { it.isNotBlank() } ?: return@mapNotNull null
+                var title = a.text().trim()
+                if (title.isEmpty()) title = el.selectFirst("img")?.attr("alt")?.trim().orEmpty()
+                if (title.isEmpty()) return@mapNotNull null
+                val poster = el.selectFirst("img")?.attr("abs:src")?.takeIf { it.isNotBlank() }
+                newTvSeriesSearchResponse(title, href) {
+                    this.posterUrl = poster
+                }
+            }
+            .distinctBy { it.url }
     }
 
     // ------------------------------------------------------------------
