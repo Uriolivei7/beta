@@ -12,7 +12,7 @@ class XuperVODProvider : MainAPI() {
         private const val TAG = "XuperVOD"
     }
 
-    override var mainUrl = "https://modlyo.com/magis_web/"
+    override var mainUrl = "https://modlyo.com/magis_web"
     override var name = "XuperVOD"
     override val supportedTypes = setOf(TvType.TvSeries, TvType.Movie)
     override var lang = "es"
@@ -23,10 +23,10 @@ class XuperVODProvider : MainAPI() {
         "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept" to "application/json, text/plain, */*",
         "Accept-Language" to "es-ES,es;q=0.9",
-        "Referer" to mainUrl,
+        "Referer" to "$mainUrl/",
     )
 
-    private suspend fun apiCall(action: String, params: Map<String, Any>? = null): Any? {
+    private suspend fun apiRoot(action: String, params: Map<String, Any>? = null): org.json.JSONObject? {
         return try {
             val q = buildQueryString(action, params)
             val url = "$mainUrl/index.php?$q"
@@ -37,13 +37,13 @@ class XuperVODProvider : MainAPI() {
                 return null
             }
             val text = resp.text
-            Log.d(TAG, "API $action response: ${text.take(500)}")
+            Log.d(TAG, "API $action response: ${text.take(400)}")
             val json = org.json.JSONObject(text)
             if (!json.optBoolean("ok", false)) {
                 Log.w(TAG, "API $action error: ${json.optString("error", "sin error")}")
                 return null
             }
-            json.opt("data")
+            json
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             Log.w(TAG, "API $action falló: ${e.message}")
@@ -70,10 +70,10 @@ class XuperVODProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.d(TAG, "getMainPage llamado: page=$page data='${request.data}'")
         return try {
-            val data = apiCall("home") ?: return null
-            val items = parseHomeItems(data)
+            val root = apiRoot("home") ?: return null
+            val items = parseHomeItems(root.optJSONArray("data"))
             Log.d(TAG, "getMainPage -> ${items.size} items")
-            newHomePageResponse(HomePageList("Descubrir", items), false)
+            newHomePageResponse(HomePageList("Descubrir", items.toMutableList()), false)
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             Log.w(TAG, "getMainPage falló: ${e.message}")
@@ -81,42 +81,38 @@ class XuperVODProvider : MainAPI() {
         }
     }
 
-    private fun parseHomeItems(data: Any?): List<SearchResponse> {
+    private fun parseHomeItems(rowsArray: org.json.JSONArray?): List<SearchResponse> {
         val items = mutableListOf<SearchResponse>()
-        if (data == null) return items
+        if (rowsArray == null) return items
         try {
-            val rowsArray = when (data) {
-                is org.json.JSONArray -> data
-                is org.json.JSONObject -> data.optJSONArray("data") ?: org.json.JSONArray()
-                else -> return items
-            }
-
             for (i in 0 until rowsArray.length()) {
                 val row = rowsArray.optJSONObject(i) ?: continue
                 val rowItems = row.optJSONArray("items") ?: continue
                 for (j in 0 until rowItems.length()) {
-                    val item = rowItems.optJSONObject(j) ?: continue
-                    val id = item.optString("id", item.optString("contentId", ""))
-                    val title = item.optString("title", item.optString("name", ""))
-                    val type = item.optString("type", item.optString("media_type", "movie"))
-                    val poster = item.optString("poster", item.optString("image", ""))
-
-                    if (id.isNotEmpty() && title.isNotEmpty()) {
-                        items.add(newTvSeriesSearchResponse(title, "$mainUrl/detail/$id/$type", mapTvType(type)) {
-                            this.posterUrl = if (poster.isNotEmpty()) poster else null
-                        })
-                    }
+                    rowItems.optJSONObject(j)?.let { addItem(items, it) }
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "parseHomeItems falló: ${e.message}", e)
+            Log.w(TAG, "parseHomeItems falló: ${e.message}")
         }
-        return items
+        return items.distinctBy { it.url }
+    }
+
+    private fun addItem(items: MutableList<SearchResponse>, item: org.json.JSONObject) {
+        val id = item.optString("id", item.optString("contentId", ""))
+        if (id.isEmpty()) return
+        val title = item.optString("title", item.optString("name", ""))
+        if (title.isEmpty()) return
+        val type = item.optString("type", item.optString("media_type", "movie"))
+        val poster = item.optString("poster", item.optString("image", ""))
+        items.add(newTvSeriesSearchResponse(title, "$mainUrl/detail/$id/$type", mapTvType(type)) {
+            this.posterUrl = if (poster.isNotEmpty()) poster else null
+        })
     }
 
     private fun mapTvType(type: String): TvType {
         return when (type.lowercase()) {
-            "series", "tv", "teleplay", "tvseries" -> TvType.TvSeries
+            "series", "tv", "teleplay" -> TvType.TvSeries
             "anime", "animacion", "animación" -> TvType.Anime
             else -> TvType.Movie
         }
@@ -125,8 +121,8 @@ class XuperVODProvider : MainAPI() {
     override suspend fun search(query: String): List<SearchResponse>? {
         Log.d(TAG, "search() llamado: '$query'")
         return try {
-            val data = apiCall("search", mapOf("q" to query)) ?: return null
-            val results = parseSearchResults(data)
+            val root = apiRoot("search", mapOf("q" to query)) ?: return null
+            val results = parseSearchResults(root.optJSONArray("data"))
             Log.d(TAG, "search '$query' -> ${results.size} resultados")
             results
         } catch (e: Exception) {
@@ -136,33 +132,25 @@ class XuperVODProvider : MainAPI() {
         }
     }
 
-    private fun parseSearchResults(data: Any?): List<SearchResponse> {
+    private fun parseSearchResults(dataArray: org.json.JSONArray?): List<SearchResponse> {
         val items = mutableListOf<SearchResponse>()
-        if (data == null) return items
+        if (dataArray == null) return items
         try {
-            val json = when (data) {
-                is org.json.JSONArray -> data
-                is org.json.JSONObject -> data.optJSONArray("results") ?: data.optJSONArray("data") ?: org.json.JSONArray()
-                else -> return items
-            }
-
-            for (i in 0 until json.length()) {
-                val item = json.optJSONObject(i) ?: continue
-                val id = item.optString("id", item.optString("contentId", ""))
-                val title = item.optString("title", item.optString("name", ""))
-                val type = item.optString("type", item.optString("media_type", "movie"))
-                val poster = item.optString("poster", item.optString("image", ""))
-
-                if (id.isNotEmpty() && title.isNotEmpty()) {
-                    items.add(newTvSeriesSearchResponse(title, "$mainUrl/detail/$id/$type", mapTvType(type)) {
-                        this.posterUrl = if (poster.isNotEmpty()) poster else null
-                    })
+            for (i in 0 until dataArray.length()) {
+                val el = dataArray.optJSONObject(i) ?: continue
+                val rowItems = el.optJSONArray("items")
+                if (rowItems != null) {
+                    for (j in 0 until rowItems.length()) {
+                        rowItems.optJSONObject(j)?.let { addItem(items, it) }
+                    }
+                } else {
+                    addItem(items, el)
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "parseSearchResults falló: ${e.message}", e)
+            Log.w(TAG, "parseSearchResults falló: ${e.message}")
         }
-        return items
+        return items.distinctBy { it.url }
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -170,49 +158,46 @@ class XuperVODProvider : MainAPI() {
         val parts = url.substringAfter("/detail/").split("/", limit = 2)
         if (parts.size < 2) return null
         val id = parts[0]
-        val type = parts[1]
+        val type = parts[1].substringBefore("?")
         return try {
-            val metaObj = apiCall("meta", mapOf("id" to id))
-            val meta = metaObj as? org.json.JSONObject ?: return null
-            parseDetail(meta, id, type, url)
+            val root = apiRoot("meta", mapOf("id" to id)) ?: return null
+            val dataArr = root.optJSONArray("data")
+            val meta = if (dataArr != null) dataArr.optJSONObject(0) else root.optJSONObject("data")
+            parseDetail(meta, type, url)
         } catch (e: Exception) {
             if (e is CancellationException) throw e
-            Log.w(TAG, "load falló: ${e.message}", e)
+            Log.w(TAG, "load falló: ${e.message}")
             null
         }
     }
 
-    private suspend fun parseDetail(json: org.json.JSONObject?, id: String, type: String, url: String): LoadResponse? {
+    private suspend fun parseDetail(json: org.json.JSONObject?, type: String, url: String): LoadResponse? {
         if (json == null) return null
         val title = json.optString("title", json.optString("name", ""))
-        val description = json.optString("description", json.optString("plot", json.optString("overview", "")))
+        val description = json.optString("description", json.optString("plot", ""))
         val poster = json.optString("poster", json.optString("image", ""))
         val year = json.optString("year", "")
+        val metaType = json.optString("type", type)
+        val seriesContentId = json.optString("contentId", json.optString("id", ""))
 
         val episodes = mutableListOf<Episode>()
-
-        // Buscamos temporadas en diversas estructuras posibles del JSON
-        val seasons = json.optJSONArray("seasons") ?: json.optJSONArray("season_list")
-
-        Log.d(TAG, "parseDetail -> Título: $title, Temporadas encontradas: ${seasons?.length() ?: 0}")
-
+        val seasons = json.optJSONArray("seasons")
         if (seasons != null) {
             for (s in 0 until seasons.length()) {
                 val season = seasons.optJSONObject(s) ?: continue
-                val seasonNum = season.optInt("season", season.optInt("season_number", season.optInt("number", s + 1)))
-                val eps = season.optJSONArray("episodes") ?: season.optJSONArray("items") ?: continue
-
-                Log.d(TAG, "Temporada $seasonNum tiene ${eps.length()} episodios")
-
+                val seasonNum = season.optInt("number", s + 1)
+                val seasonCid = season.optString("contentId", seriesContentId)
+                val eps = season.optJSONArray("episodes") ?: continue
                 for (e in 0 until eps.length()) {
                     val ep = eps.optJSONObject(e) ?: continue
-                    val epId = ep.optString("id", ep.optString("contentId", ""))
-                    val epTitle = ep.optString("title", ep.optString("name", "Episodio ${e + 1}"))
-                    val epNum = ep.optInt("number", ep.optInt("episode_number", e + 1))
-                    val epPoster = ep.optString("poster", ep.optString("image", ""))
-                    val epDesc = ep.optString("description", ep.optString("overview", ""))
-
-                    episodes.add(newEpisode("$mainUrl/detail/$epId/episode") {
+                    val epId = ep.optString("id", "")
+                    if (epId.isEmpty()) continue
+                    val epTitle = ep.optString("title", "Episodio ${e + 1}")
+                    val epNum = ep.optInt("number", e + 1)
+                    val epPoster = ep.optString("poster", "")
+                    val epDesc = ep.optString("description", "")
+                    val epUrl = "$mainUrl/detail/$epId/episode?sc=$seasonCid"
+                    episodes.add(newEpisode(epUrl) {
                         this.name = epTitle
                         this.season = seasonNum
                         this.episode = epNum
@@ -223,38 +208,17 @@ class XuperVODProvider : MainAPI() {
             }
         }
 
-        // Respaldo por si los episodios vienen planos sin array de temporadas
-        val flatEpisodes = json.optJSONArray("episodes")
-        if (episodes.isEmpty() && flatEpisodes != null) {
-            for (e in 0 until flatEpisodes.length()) {
-                val ep = flatEpisodes.optJSONObject(e) ?: continue
-                val epId = ep.optString("id", "")
-                val epTitle = ep.optString("title", "Episodio ${e + 1}")
-                val epNum = ep.optInt("number", e + 1)
-                val epPoster = ep.optString("poster", "")
-                val epDesc = ep.optString("description", "")
+        Log.d(TAG, "parseDetail '$title' type=$metaType temporadas=${seasons?.length() ?: 0} episodios=${episodes.size}")
 
-                episodes.add(newEpisode("$mainUrl/detail/$epId/episode") {
-                    this.name = epTitle
-                    this.season = ep.optInt("season", 1)
-                    this.episode = epNum
-                    this.posterUrl = if (epPoster.isNotEmpty()) epPoster else null
-                    this.description = if (epDesc.isNotEmpty()) epDesc else null
-                })
-            }
-        }
-
-        val finalType = if (type.lowercase() == "movie" && episodes.isEmpty()) TvType.Movie else mapTvType(type)
-
-        if (finalType == TvType.Movie) {
-            return newMovieLoadResponse(title, url, TvType.Movie, url) {
+        if (episodes.isEmpty()) {
+            return newMovieLoadResponse(title, url, mapTvType(metaType), "$mainUrl/detail/$seriesContentId/movie") {
                 this.posterUrl = if (poster.isNotEmpty()) poster else null
                 this.plot = if (description.isNotEmpty()) description else null
                 this.year = if (year.isNotEmpty()) year.toIntOrNull() else null
             }
         }
 
-        return newTvSeriesLoadResponse(title, url, finalType, episodes) {
+        return newTvSeriesLoadResponse(title, url, mapTvType(metaType), episodes) {
             this.posterUrl = if (poster.isNotEmpty()) poster else null
             this.plot = if (description.isNotEmpty()) description else null
             this.year = if (year.isNotEmpty()) year.toIntOrNull() else null
@@ -268,18 +232,32 @@ class XuperVODProvider : MainAPI() {
         callback: (ExtractorLink) -> Unit
     ): Boolean {
         Log.d(TAG, "loadLinks data='$data'")
-        val parts = data.substringAfter("/detail/").split("/", limit = 2)
-        if (parts.size < 2) return false
-        val id = parts[0]
+        val afterDetail = data.substringAfter("/detail/")
+        val id = afterDetail.substringBefore("/")
+        val rest = afterDetail.substringAfter("/", "")
+        val type = rest.substringBefore("?").ifEmpty { "movie" }
+        val seriesContentId = if (rest.contains("sc=")) rest.substringAfter("sc=").substringBefore("&") else ""
+
+        if (id.isEmpty()) return false
+        Log.d(TAG, "loadLinks id=$id type=$type seriesContentId=$seriesContentId")
 
         return try {
-            val metaObj = apiCall("meta", mapOf("id" to id))
-            val meta = metaObj as? org.json.JSONObject ?: return false
-            val streams = extractStreams(meta)
-            if (streams.isEmpty()) return false
+            val root = apiRoot(
+                "streams",
+                mapOf("id" to id, "type" to type, "seriesContentId" to seriesContentId),
+            ) ?: return false
+
+            val streams = parseStreams(root)
+            if (streams.isEmpty()) {
+                Log.w(TAG, "loadLinks sin streams para id=$id")
+                return false
+            }
             for (stream in streams) {
-                callback(newExtractorLink(name, stream.label, stream.url, stream.type) {
-                    this.referer = mainUrl
+                for (sub in stream.subtitles) subtitleCallback(sub)
+                val playUrl = buildProxyUrl(stream)
+                Log.d(TAG, "loadLinks stream ${stream.label} -> ${playUrl.take(120)}")
+                callback(newExtractorLink(name, stream.label, playUrl, stream.type) {
+                    this.referer = "$mainUrl/"
                     this.headers = headers
                     this.quality = stream.quality
                 })
@@ -292,24 +270,56 @@ class XuperVODProvider : MainAPI() {
         }
     }
 
-    private fun extractStreams(data: org.json.JSONObject?): List<StreamInfo> {
-        val streams = mutableListOf<StreamInfo>()
-        if (data == null) return streams
-        try {
-            val streamsArray = data.optJSONArray("streams") ?: data.optJSONArray("sources") ?: return streams
-            for (i in 0 until streamsArray.length()) {
-                val s = streamsArray.optJSONObject(i) ?: continue
-                val url = s.optString("url", "")
-                val label = s.optString("label", s.optString("quality", "Desconocido"))
-                val streamType = s.optString("type", "VIDEO")
-                if (url.isNotEmpty()) {
-                    streams.add(StreamInfo(label, url, if (streamType == "hls" || url.contains(".m3u8")) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO, mapQuality(label)))
+    private fun buildProxyUrl(stream: StreamData): String {
+        val sb = StringBuilder("$mainUrl/proxy.php?url=")
+        sb.append(java.net.URLEncoder.encode(stream.url, "UTF-8"))
+        if (stream.license.isNotEmpty()) sb.append("&license=").append(java.net.URLEncoder.encode(stream.license, "UTF-8"))
+        if (stream.auth.isNotEmpty()) sb.append("&auth=").append(java.net.URLEncoder.encode(stream.auth, "UTF-8"))
+        if (stream.userAgent.isNotEmpty()) sb.append("&ua=").append(java.net.URLEncoder.encode(stream.userAgent, "UTF-8"))
+        return sb.toString()
+    }
+
+    private fun parseStreams(root: org.json.JSONObject): List<StreamData> {
+        val out = mutableListOf<StreamData>()
+        val dataArr = root.optJSONArray("data")
+        val streamsArr = dataArr
+            ?: root.optJSONObject("data")?.let { it.optJSONArray("streams") ?: it.optJSONArray("sources") }
+            ?: return out
+        for (i in 0 until streamsArr.length()) {
+            val s = streamsArr.optJSONObject(i) ?: continue
+            val url = s.optString("url", "")
+            if (url.isEmpty()) continue
+            val label = s.optString("label", s.optString("quality", "Desconocido"))
+            val streamType = s.optString("type", "VIDEO")
+            val hdrs = s.optJSONObject("headers")
+            val license = hdrs?.optString("Content-License", "")?.takeIf { it.isNotEmpty() } ?: s.optString("license", "")
+            val auth = hdrs?.optString("Content-Auth", "")?.takeIf { it.isNotEmpty() } ?: s.optString("auth", "")
+            val ua = hdrs?.optString("User-Agent", "")?.takeIf { it.isNotEmpty() } ?: ""
+            val isHls = streamType == "hls" || s.optBoolean("isHls", false) || url.contains(".m3u8")
+            val subs = mutableListOf<SubtitleFile>()
+            val subsArr = s.optJSONArray("subtitles")
+            if (subsArr != null) {
+                for (k in 0 until subsArr.length()) {
+                    val sub = subsArr.optJSONObject(k) ?: continue
+                    val subUrl = sub.optString("url", "")
+                    if (subUrl.isEmpty()) continue
+                    val subLang = sub.optString("language", sub.optString("lang", "es"))
+                    val subLabel = sub.optString("label", subLang)
+                    subs.add(SubtitleFile(subLang, subUrl))
                 }
             }
-        } catch (e: Exception) {
-            Log.w(TAG, "extractStreams falló: ${e.message}")
+            out.add(StreamData(
+                url = url,
+                label = label,
+                type = if (isHls) ExtractorLinkType.M3U8 else ExtractorLinkType.VIDEO,
+                quality = mapQuality(label),
+                license = license,
+                auth = auth,
+                userAgent = ua,
+                subtitles = subs,
+            ))
         }
-        return streams
+        return out
     }
 
     private fun mapQuality(label: String): Int {
@@ -323,5 +333,14 @@ class XuperVODProvider : MainAPI() {
         }
     }
 
-    private data class StreamInfo(val label: String, val url: String, val type: ExtractorLinkType, val quality: Int)
+    private data class StreamData(
+        val url: String,
+        val label: String,
+        val type: ExtractorLinkType,
+        val quality: Int,
+        val license: String,
+        val auth: String,
+        val userAgent: String,
+        val subtitles: List<SubtitleFile>,
+    )
 }

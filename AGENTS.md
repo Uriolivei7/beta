@@ -4076,3 +4076,37 @@ Cascada de 3 fases (timeout total 60000ms):
 - Capas: criptografia → HTTP transport → sesion → catalogo/resolucion
 - Desafio geo: puede requerir VPN/proxy si el ISP bloquea el acceso a Magis/Xuper
 - Live TV: requiere cuenta; anonymous solo da acceso a catalogo VOD
+
+
+## XuperVODProvider + XuperLiveProvider â€” API Magis/Xuper y geo-bloqueo (08 Nov 2026 v2)
+
+### Estructura de la API (descubierta en `magis_app_core.js`)
+- Endpoint Ãºnico: `https://modlyo.com/magis_web/index.php?action=<accion>&<params>`
+- Respuesta: `{"ok":true,"data":...}`. **`data` suele ser un ARRAY** (no objeto) â€” usar `optJSONArray("data")`, NO `optJSONObject("data")`.
+- Acciones:
+  | Accion | Params | data |
+  |---|---|---|
+  | `home` | - | filas[] con `items[]` (peliculas/series) |
+  | `search` | `q` | items[] directos (o filas con items) |
+  | `live` | - | filas[] con `items[]` (canales) |
+  | `meta` | `id` | objeto: `type`, `seasons[]` (cada una `number`, `contentId`, `episodes[]`) |
+  | `streams` | `id`, `type` (episode/movie), `seriesContentId` | streams[] |
+  | `live_stream` | `id` | streams[] |
+- Temporadas usan **`number`** (no `season`); episodios: `id`, `title`, `number`, `poster`, `description`.
+
+### Reproduccion: OBLIGATORIO proxy.php
+- La web reproduce via `proxy.php?url=<url>&license=<...>&auth=<...>&ua=<...>` (funcion `proxyUrl` en el JS). La URL directa del CDN sin proxy/headers es rechazada.
+- Implementado `buildProxyUrl(stream)` en ambos providers. Headers del stream vienen en `stream.headers` (`Content-License`, `Content-Auth`, `User-Agent`) o en `stream.license`/`stream.auth`.
+- TS VOD en la web usa `stream.php` (remux + audio), pero el plugin usa `proxy.php` por simplicidad.
+
+### Geo-bloqueo (BLOQUEADOR principal)
+- Error real en dispositivo: `{"ok":false,"error":"Sin sesion Magis valida (seeds agotadas o region). v8/active: æ‰€åœ¨åŒºåŸŸä¸ºé»‘åå•ï¼Œæ ç›®ä¸å¯è§"}`.
+- `æ‰€åœ¨åŒºåŸŸä¸ºé»‘åå•` = **region en lista negra**. Sin VPN/proxy en pais permitido, `home`/`search`/`live`/`meta`/`streams` devuelven `ok:false` y el plugin queda vacio. No es bug del codigo.
+- El usuario debe usar VPN (region AR/CL/PE/etc. permitida) y reinstalar.
+
+### Estado v2
+- XuperVODProvider: `apiRoot()` devuelve el JSON raiz; home/search leen `data` como array; `meta` parsea `seasons[].number`/`contentId`/`episodes[]`; `loadLinks` usa accion `streams` (id/type/seriesContentId) + `proxy.php`.
+- XuperLiveProvider: home/search leen `live` array de filas; `loadLinks` usa `live_stream` + `proxy.php`.
+- `build.gradle.kts` y `plugins.json` de ambos a **v2**; `fileSize` pendiente tras compilar.
+- Compilacion: pendiente por el usuario (`.\gradlew.bat :XuperVODProvider:make --console=plain -q` y `:XuperLiveProvider:make --console=plain -q`). **No compilado por regla del repo.**
+- â¸ï¸ Pendiente: probar con VPN en region permitida. Sin VPN el resultado es vacio por diseno del servidor.
