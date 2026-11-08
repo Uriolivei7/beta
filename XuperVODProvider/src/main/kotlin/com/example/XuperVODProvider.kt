@@ -37,6 +37,7 @@ class XuperVODProvider : MainAPI() {
                 return null
             }
             val text = resp.text
+            Log.d(TAG, "API $action response: ${text.take(500)}")
             val json = org.json.JSONObject(text)
             if (!json.optBoolean("ok", false)) {
                 Log.w(TAG, "API $action error: ${json.optString("error", "sin error")}")
