@@ -26,7 +26,7 @@ class XuperLiveProvider : MainAPI() {
         "Referer" to mainUrl,
     )
 
-    private suspend fun apiCall(action: String, params: Map<String, Any>? = null): org.json.JSONObject? {
+    private suspend fun apiCall(action: String, params: Map<String, Any>? = null): Any? {
         return try {
             val q = buildQueryString(action, params)
             val url = "$mainUrl/index.php?$q"
@@ -43,7 +43,7 @@ class XuperLiveProvider : MainAPI() {
                 Log.w(TAG, "API $action error: ${json.optString("error", "sin error")}")
                 return null
             }
-            json.optJSONObject("data")
+            json.opt("data")
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             Log.w(TAG, "API $action falló: ${e.message}")
@@ -62,16 +62,6 @@ class XuperLiveProvider : MainAPI() {
         return sb.toString()
     }
 
-    private fun joinStrings(list: org.json.JSONArray?, sep: String): String {
-        if (list == null) return ""
-        val sb = StringBuilder()
-        for (i in 0 until list.length()) {
-            if (i > 0) sb.append(sep)
-            sb.append(list.optString(i, ""))
-        }
-        return sb.toString()
-    }
-
     override val mainPage = mainPageOf(
         "tvlive" to "TV en Vivo",
     )
@@ -79,11 +69,10 @@ class XuperLiveProvider : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         Log.d(TAG, "getMainPage llamado: page=$page data='${request.data}'")
         return try {
-            val live = apiCall("live") ?: return null
-            val channels = parseLiveChannels(live)
+            val data = apiCall("live") ?: return null
+            val channels = parseLiveChannels(data)
             Log.d(TAG, "getMainPage -> ${channels.size} canales")
-            val list = channels.toMutableList()
-            newHomePageResponse(HomePageList("TV en Vivo", list), false)
+            newHomePageResponse(HomePageList("TV en Vivo", channels), false)
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             Log.w(TAG, "getMainPage falló: ${e.message}")
@@ -91,24 +80,34 @@ class XuperLiveProvider : MainAPI() {
         }
     }
 
-    private fun parseLiveChannels(data: org.json.JSONObject?): List<SearchResponse> {
+    private fun parseLiveChannels(data: Any?): List<SearchResponse> {
         val items = mutableListOf<SearchResponse>()
         if (data == null) return items
         try {
-            val json = data.optJSONArray("data") ?: return items
-            for (i in 0 until json.length()) {
-                val ch = json.optJSONObject(i) ?: continue
-                val id = ch.optString("id", "")
-                val title = ch.optString("title", ch.optString("name", ""))
-                val poster = ch.optString("poster", ch.optString("logo", ""))
-                val category = ch.optString("category", ch.optString("group", ""))
-                val country = ch.optString("country", "")
-                items.add(newTvSeriesSearchResponse(title, "$mainUrl/channel/$id", TvType.Live) {
-                    this.posterUrl = if (poster.isNotEmpty()) poster else null
-                })
+            val rowsArray = when (data) {
+                is org.json.JSONArray -> data
+                is org.json.JSONObject -> data.optJSONArray("data") ?: org.json.JSONArray()
+                else -> return items
+            }
+
+            for (i in 0 until rowsArray.length()) {
+                val row = rowsArray.optJSONObject(i) ?: continue
+                val channelItems = row.optJSONArray("items") ?: continue
+                for (j in 0 until channelItems.length()) {
+                    val ch = channelItems.optJSONObject(j) ?: continue
+                    val id = ch.optString("id", ch.optString("channelCode", ""))
+                    val title = ch.optString("title", ch.optString("name", ""))
+                    val poster = ch.optString("poster", ch.optString("logo", ""))
+
+                    if (id.isNotEmpty() && title.isNotEmpty()) {
+                        items.add(newTvSeriesSearchResponse(title, "$mainUrl/channel/$id", TvType.Live) {
+                            this.posterUrl = if (poster.isNotEmpty()) poster else null
+                        })
+                    }
+                }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "parseLiveChannels falló: ${e.message}")
+            Log.w(TAG, "parseLiveChannels falló: ${e.message}", e)
         }
         return items
     }
@@ -123,27 +122,38 @@ class XuperLiveProvider : MainAPI() {
         Log.d(TAG, "load($url)")
         val id = url.substringAfter("/channel/")
         return try {
-            val live = apiCall("live") ?: return null
-            val ch = findChannel(live, id) ?: return null
-            newTvSeriesLoadResponse(ch.optString("title", ""), url, TvType.Live, mutableListOf()) {
-                this.posterUrl = ch.optString("poster", ch.optString("logo", "")).takeIf { it.isNotEmpty() }
-                this.plot = ch.optString("category", "")
-                this.tags = ch.optString("country", "").takeIf { it.isNotEmpty() }?.let { listOf(it) }
+            val data = apiCall("live") ?: return null
+            val ch = findChannel(data, id) ?: return null
+            val title = ch.optString("title", ch.optString("name", ""))
+            val poster = ch.optString("poster", ch.optString("logo", ""))
+
+            newTvSeriesLoadResponse(title, url, TvType.Live, mutableListOf()) {
+                this.posterUrl = if (poster.isNotEmpty()) poster else null
             }
         } catch (e: Exception) {
             if (e is CancellationException) throw e
-            Log.w(TAG, "load falló: ${e.message}")
+            Log.w(TAG, "load falló: ${e.message}", e)
             null
         }
     }
 
-    private fun findChannel(data: org.json.JSONObject?, id: String): org.json.JSONObject? {
+    private fun findChannel(data: Any?, id: String): org.json.JSONObject? {
         if (data == null) return null
         try {
-            val json = data.optJSONArray("data") ?: return null
-            for (i in 0 until json.length()) {
-                val ch = json.optJSONObject(i) ?: continue
-                if (ch.optString("id", "") == id) return ch
+            val rowsArray = when (data) {
+                is org.json.JSONArray -> data
+                is org.json.JSONObject -> data.optJSONArray("data") ?: org.json.JSONArray()
+                else -> return null
+            }
+
+            for (i in 0 until rowsArray.length()) {
+                val row = rowsArray.optJSONObject(i) ?: continue
+                val channelItems = row.optJSONArray("items") ?: continue
+                for (j in 0 until channelItems.length()) {
+                    val ch = channelItems.optJSONObject(j) ?: continue
+                    val chId = ch.optString("id", ch.optString("channelCode", ""))
+                    if (chId == id) return ch
+                }
             }
         } catch (e: Exception) {
             Log.w(TAG, "findChannel falló: ${e.message}")
@@ -161,7 +171,8 @@ class XuperLiveProvider : MainAPI() {
         val id = data.substringAfter("/channel/")
 
         return try {
-            val streamData = apiCall("live_stream", mapOf("id" to id)) ?: return false
+            val streamDataObj = apiCall("live_stream", mapOf("id" to id))
+            val streamData = streamDataObj as? org.json.JSONObject ?: return false
             val stream = parseStream(streamData) ?: return false
 
             Log.d(TAG, "loadLinks stream: ${stream.url} (${stream.type})")
@@ -182,8 +193,7 @@ class XuperLiveProvider : MainAPI() {
     private fun parseStream(data: org.json.JSONObject?): StreamInfo? {
         if (data == null) return null
         try {
-            val json = data
-            val streams = json.optJSONArray("streams") ?: json.optJSONArray("sources") ?: return null
+            val streams = data.optJSONArray("streams") ?: data.optJSONArray("sources") ?: return null
             val s = streams.optJSONObject(0) ?: return null
             val url = s.optString("url", "")
             val label = s.optString("label", "TV en Vivo")
