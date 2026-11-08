@@ -1484,7 +1484,7 @@
    "TvSeries",
    "Anime"
   ],
-  "iconUrl": "https://modlyo.com/magis-web/favicon.ico",
+  "iconUrl": "https://modlyo.com/magis_web/assets/icon-192.png",
   "language": "es",
   "fileSize": 0
  },
@@ -1502,7 +1502,7 @@
   "tvTypes": [
    "Live"
   ],
-  "iconUrl": "https://modlyo.com/magis-web/favicon.ico",
+  "iconUrl": "https://modlyo.com/magis_web/assets/icon-192.png",
   "language": "es",
   "fileSize": 0
  }
