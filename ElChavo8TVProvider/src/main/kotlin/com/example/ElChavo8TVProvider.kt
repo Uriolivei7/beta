@@ -53,11 +53,11 @@ class ElChavo8TVProvider : MainAPI() {
     )
 
     override val mainPage = mainPageOf(
-        "el-chavo-del-8-capitulos-completos/" to "El Chavo del 8",
         "el-chapulin-colorado-capitulos-completos/" to "El Chapulín Colorado",
+        "el-chavo-del-8-capitulos-completos/" to "El Chavo del 8",
         "chespirito-capitulos-completos/" to "Serie Chespirito",
-        "el-chavo-animado-serie-completa/" to "El Chavo Animado",
         "el-chapulin-colorado-animado-serie-completa/" to "El Chapulín Animado",
+        "el-chavo-animado-serie-completa/" to "El Chavo Animado",
         "los-programas-de-kiko-carlos-villagran/" to "Programas de Kiko",
         "el-chanfle-y-el-chanfle-2/" to "Películas",
     )
