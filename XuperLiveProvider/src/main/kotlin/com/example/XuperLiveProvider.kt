@@ -95,7 +95,7 @@ class XuperLiveProvider : MainAPI() {
                 val channelItems = row.optJSONArray("items") ?: continue
                 for (j in 0 until channelItems.length()) {
                     val ch = channelItems.optJSONObject(j) ?: continue
-                    val id = ch.optString("id", ch.optString("channelCode", ""))
+                    val id = ch.optString("id", ch.optString("channelCode", ch.optString("contentId", "")))
                     val title = ch.optString("title", ch.optString("name", ""))
                     val poster = ch.optString("poster", ch.optString("logo", ""))
 
@@ -145,11 +145,10 @@ class XuperLiveProvider : MainAPI() {
 
                 for (j in 0 until channelItems.length()) {
                     val ch = channelItems.optJSONObject(j) ?: continue
-                    val id = ch.optString("id", ch.optString("channelCode", ""))
+                    val id = ch.optString("id", ch.optString("channelCode", ch.optString("contentId", "")))
                     val title = ch.optString("title", ch.optString("name", ""))
                     val poster = ch.optString("poster", ch.optString("logo", ""))
 
-                    // Verificamos si el nombre del canal contiene la búsqueda del usuario
                     if (id.isNotEmpty() && title.isNotEmpty() && title.lowercase().contains(cleanQuery)) {
                         items.add(newTvSeriesSearchResponse(title, "$mainUrl/channel/$id", TvType.Live) {
                             this.posterUrl = if (poster.isNotEmpty()) poster else null
@@ -161,7 +160,6 @@ class XuperLiveProvider : MainAPI() {
             Log.w(TAG, "filterChannels falló: ${e.message}", e)
         }
 
-        // Eliminamos duplicados por si el mismo canal aparece en múltiples listas
         return items.distinctBy { it.url }
     }
 
@@ -170,9 +168,9 @@ class XuperLiveProvider : MainAPI() {
         val id = url.substringAfter("/channel/")
         return try {
             val data = apiCall("live") ?: return null
-            val ch = findChannel(data, id) ?: return null
-            val title = ch.optString("title", ch.optString("name", ""))
-            val poster = ch.optString("poster", ch.optString("logo", ""))
+            val ch = findChannel(data, id)
+            val title = ch?.optString("title", ch.optString("name", "")) ?: "Canal en Vivo"
+            val poster = ch?.optString("poster", ch.optString("logo", "")) ?: ""
 
             newTvSeriesLoadResponse(title, url, TvType.Live, mutableListOf()) {
                 this.posterUrl = if (poster.isNotEmpty()) poster else null
@@ -198,8 +196,10 @@ class XuperLiveProvider : MainAPI() {
                 val channelItems = row.optJSONArray("items") ?: continue
                 for (j in 0 until channelItems.length()) {
                     val ch = channelItems.optJSONObject(j) ?: continue
-                    val chId = ch.optString("id", ch.optString("channelCode", ""))
-                    if (chId == id) return ch
+                    val chId = ch.optString("id", "")
+                    val chCode = ch.optString("channelCode", "")
+                    val chContentId = ch.optString("contentId", "")
+                    if (chId == id || chCode == id || chContentId == id) return ch
                 }
             }
         } catch (e: Exception) {

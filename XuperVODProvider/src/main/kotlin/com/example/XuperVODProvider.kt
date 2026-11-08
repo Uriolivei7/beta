@@ -43,9 +43,7 @@ class XuperVODProvider : MainAPI() {
                 Log.w(TAG, "API $action error: ${json.optString("error", "sin error")}")
                 return null
             }
-            // Retorna JSONObject o JSONArray según lo que entregue la API
-            val dataObj = json.opt("data")
-            dataObj
+            json.opt("data")
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             Log.w(TAG, "API $action falló: ${e.message}")
@@ -60,16 +58,6 @@ class XuperVODProvider : MainAPI() {
                 sb.append("&$k=")
                 sb.append(java.net.URLEncoder.encode(v.toString(), "UTF-8"))
             }
-        }
-        return sb.toString()
-    }
-
-    private fun joinStrings(list: org.json.JSONArray?, sep: String): String {
-        if (list == null) return ""
-        val sb = StringBuilder()
-        for (i in 0 until list.length()) {
-            if (i > 0) sb.append(sep)
-            sb.append(list.optString(i, ""))
         }
         return sb.toString()
     }
@@ -202,16 +190,17 @@ class XuperVODProvider : MainAPI() {
         val year = json.optString("year", "")
 
         val episodes = mutableListOf<Episode>()
-        val seasons = json.optJSONArray("seasons")
+
+        // Buscamos temporadas en diversas estructuras posibles del JSON
+        val seasons = json.optJSONArray("seasons") ?: json.optJSONArray("season_list")
 
         Log.d(TAG, "parseDetail -> Título: $title, Temporadas encontradas: ${seasons?.length() ?: 0}")
 
         if (seasons != null) {
             for (s in 0 until seasons.length()) {
                 val season = seasons.optJSONObject(s) ?: continue
-
-                val seasonNum = season.optInt("season", season.optInt("season_number", s + 1))
-                val eps = season.optJSONArray("episodes") ?: continue
+                val seasonNum = season.optInt("season", season.optInt("season_number", season.optInt("number", s + 1)))
+                val eps = season.optJSONArray("episodes") ?: season.optJSONArray("items") ?: continue
 
                 Log.d(TAG, "Temporada $seasonNum tiene ${eps.length()} episodios")
 
@@ -234,6 +223,7 @@ class XuperVODProvider : MainAPI() {
             }
         }
 
+        // Respaldo por si los episodios vienen planos sin array de temporadas
         val flatEpisodes = json.optJSONArray("episodes")
         if (episodes.isEmpty() && flatEpisodes != null) {
             for (e in 0 until flatEpisodes.length()) {
