@@ -12,7 +12,7 @@ class XuperLiveProvider : MainAPI() {
         private const val TAG = "XuperLive"
     }
 
-    override var mainUrl = "https://modlyo.com/magis_web/"
+    override var mainUrl = "https://modlyo.com/magis_web"
     override var name = "XuperLive"
     override val supportedTypes = setOf(TvType.Live)
     override var lang = "es"
