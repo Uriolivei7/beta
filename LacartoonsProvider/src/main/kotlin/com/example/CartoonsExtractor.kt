@@ -169,6 +169,44 @@ open class Cubeembed : ExtractorApi() {
                     else if (!result.isCompleted) result.complete(null)
                 }
 
+                fun runApi() {
+                    if (result.isCompleted) return
+                    val apiScript = """(async function(){try{
+                        if(!window.simpleCrypto){NativeBridge.onErr('no simpleCrypto');return;}
+                        var slug=location.pathname.split('/').filter(Boolean).pop();
+                        if(!slug){NativeBridge.onErr('no slug');return;}
+                        var pv=new URLSearchParams(location.search).get('pv');
+                        var salts=[location.origin,location.hostname,location.host,''];
+                        function collect(o,acc,d){if(!o||typeof o!=='object'||d>6)return;
+                          if(typeof o.hls==='string'&&o.hls&&!acc.hls)acc.hls=o.hls;
+                          if(typeof o.tiktok==='string'&&o.tiktok&&!acc.tiktok)acc.tiktok=o.tiktok;
+                          if(typeof o.direct==='string'&&o.direct&&!acc.direct)acc.direct=o.direct;
+                          for(var k in o){try{collect(o[k],acc,d+1);}catch(e){}}}
+                        function pick(a){return a.hls||a.tiktok||a.direct||null;}
+                        async function tryDec(v,salt){if(typeof v!=='string'||v.length<8)return null;
+                          try{var t=await window.simpleCrypto.decrypt(v,salt);var p=JSON.parse(t);if(p&&typeof p==='object')return p;}catch(e){}
+                          try{var p2=JSON.parse(v);if(p2&&typeof p2==='object')return p2;}catch(e){}
+                          return null;}
+                        for(var i=0;i<salts.length;i++){
+                          var salt=salts[i],s;
+                          try{s=await window.simpleCrypto.encrypt(slug,salt);}catch(e){continue;}
+                          var url='/api/stream?s='+s+(pv?'&pv='+encodeURIComponent(pv):'');
+                          var r;try{r=await fetch(url);}catch(e){continue;}
+                          if(!r.ok){NativeBridge.onErr('api '+r.status+' salt='+i);continue;}
+                          var j;try{j=await r.json();}catch(e){continue;}
+                          var data=(j&&j.data!==undefined)?j.data:j;
+                          var acc={};collect(data,acc,0);var src=pick(acc);
+                          if(src){NativeBridge.onStream(location.href,src);return;}
+                          if(typeof data==='string'){var p=await tryDec(data,salt);collect(p,acc,0);src=pick(acc);if(src){NativeBridge.onStream(location.href,src);return;}}
+                          else if(data&&typeof data==='object'){
+                            for(var k in data){if(typeof data[k]==='string'){var p2=await tryDec(data[k],salt);if(p2){collect(p2,acc,0);src=pick(acc);if(src){NativeBridge.onStream(location.href,src);return;}}}}
+                          }
+                        }
+                        NativeBridge.onErr('no source in payload');
+                    }catch(e){try{NativeBridge.onErr('ex '+e);}catch(_){}}})()"""
+                    try { webView.evaluateJavascript(apiScript, null) } catch (_: Exception) {}
+                }
+
                 try {
                     webView.settings.apply {
                         javaScriptEnabled = true
@@ -182,6 +220,11 @@ open class Cubeembed : ExtractorApi() {
                         @JavascriptInterface
                         fun onStream(currentPage: String, stream: String) {
                             handler.post { if (!result.isCompleted) result.complete(TurboEmbedResolved(currentPage, stream)) }
+                        }
+
+                        @JavascriptInterface
+                        fun onErr(msg: String) {
+                            Log.w("Cubeembed", "[TurboJS] $msg")
                         }
                     }, "NativeBridge")
                     webView.webViewClient = object : WebViewClient() {
@@ -200,6 +243,8 @@ open class Cubeembed : ExtractorApi() {
                                 "unknown"
                             }
                             Log.d("Cubeembed", "TurboEmbed page loaded: " + safePage)
+                            handler.postDelayed({ runApi() }, 1200L)
+                            handler.postDelayed({ runApi() }, 4500L)
                             handler.postDelayed({ poll() }, 700L)
                         }
                     }

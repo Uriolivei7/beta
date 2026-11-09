@@ -4203,3 +4203,15 @@ Cascada de 3 fases (timeout total 60000ms):
 - Versiones a **27** (uild.gradle.kts + plugins.json); ileSize pendiente.
 - Compilacion: pendiente por el usuario (.\gradlew.bat :LacartoonsProvider:make --console=plain -q). **No compilado por regla del repo.**
 - ⏸️ Pendiente: probar El Chavo T5 cap 30028; logs TurboEmbed page loaded, y si aparece TurboEmbed JW source found o captura por interceptor. Si el CDN del m3u8 exige cookies de la sesión WebView, habría que relay; revisar logs.
+
+## LacartoonsProvider — Turbovio: extraer via window.simpleCrypto (08 Nov 2026 v28)
+- **v27 falló en dispositivo**: WebView cargaba 	urboembed.com/1ybb pero NO capturaba .m3u8 en 45s (el player no llega a pedir el stream: el gate de ads intercepta el primer click y/o no se pulsa). emitted=0.
+- **v28**: en vez de depender del DOM/click/intercepción, se **ejecuta JS en el contexto de la pagina** usando su propia cripto (window.simpleCrypto) para llamar /api/stream y descifrar la respuesta:
+  - slug = ultimo segmento de la URL; sales candidatas = [origin, hostname, host, ""].
+  - Por cada salt: s = simpleCrypto.encrypt(slug, salt) -> etch('/api/stream?s='+s+(&pv)) -> recorrer data buscando hls/	iktok/direct; si estan cifrados, simpleCrypto.decrypt(field, salt) + JSON.parse.
+  - Prefiere hls > 	iktok > direct. unApi() se lanza a 1.2s y 4.5s tras onPageFinished. Sigue habiendo poll() + shouldInterceptRequest(.m3u8) como red de seguridad.
+  - NativeBridge.onErr loguea [TurboJS] ... para diagnosticar (no simpleCrypto / api XXX / no source in payload).
+- Versiones a **28** (uild.gradle.kts + plugins.json); ileSize pendiente.
+- Compilacion: pendiente por el usuario (.\gradlew.bat :LacartoonsProvider:make --console=plain -q). **No compilado por regla del repo.**
+- ⏸️ Pendiente: probar El Chavo T5 cap 30028. Logs clave: [TurboJS] api 200 salt=N, TurboEmbed JW source found (captura), o [TurboJS] no source in payload. Si sale pi 200 en todos los salts pero 
+o source in payload, el objeto descifrado usa otras claves (compartir el JSON para ajustar).
