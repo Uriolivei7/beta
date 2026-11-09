@@ -4194,3 +4194,12 @@ Cascada de 3 fases (timeout total 60000ms):
 - Versiones a **2** (uild.gradle.kts + plugins.json); ileSize pendiente.
 - Compilacion: pendiente por el usuario (.\gradlew.bat :Animeav1Provider:make --console=plain -q). **No compilado por regla del repo.**
 - ⏸️ Pendiente: probar Guimi Zhi Zhu (debe listar 13 episodios, no como pelicula).
+
+## LacartoonsProvider — Cubeembed/TurboEmbed ahora es Turbovio SPA (08 Nov 2026 v27)
+- **Sintoma (usuario)**: El Chavo Del 8 T5 (cap 30028) -> iframe cubeembed.rpmvid.com -> redirige a 	urboembed.com/1ybb; el WebView log TurboEmbed WebView terminó sin fuente JW; el API legado da 404; emitted=0 -> "enlaces no encontrados".
+- **Causa raiz**: 	urboembed.com ya NO usa JWPlayer con ile en getPlaylistItem de entrada. Ahora es **Turbovio** (SPA Vite) con: clave AES derivada de Math.floor(Date.now()/864e5) (cambia cada día), IV = salt fijo + origin, endpoints /api/stream?s=<enc>&pv=, tabla de strings ofuscada con rotación en runtime y anti-bot (webdriver/headless/okhttp). Replicar su cripto desde OkHttp es frágil.
+- **Fix v27**: esolveTurboEmbed ahora **captura el .m3u8 por intercepción de red** (WebViewClient.shouldInterceptRequest, devuelve null para no romper) + sondeo JS que mira ideo.currentSrc, performance.getEntriesByType('resource') (busca .m3u8) y jwplayer, y pulsa #player-button/.tvp-poster-play/.tvp-center-play. Timeout subido a 45s / 40 intentos. lastPageUrl = URL real de turboembed para el referer.
+- Nota ads: Turbovio intercepta el primer click si hay ads pendientes (h>0); el poll insiste cada segundo hasta que pasan.
+- Versiones a **27** (uild.gradle.kts + plugins.json); ileSize pendiente.
+- Compilacion: pendiente por el usuario (.\gradlew.bat :LacartoonsProvider:make --console=plain -q). **No compilado por regla del repo.**
+- ⏸️ Pendiente: probar El Chavo T5 cap 30028; logs TurboEmbed page loaded, y si aparece TurboEmbed JW source found o captura por interceptor. Si el CDN del m3u8 exige cookies de la sesión WebView, habría que relay; revisar logs.

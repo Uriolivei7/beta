@@ -2,9 +2,13 @@ package com.example
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.util.Log
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.databind.node.ObjectNode
+import com.lagradost.cloudstream3.utils.DataStoreHelper
 import java.security.MessageDigest
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 object SyncBackup {
 
@@ -43,11 +47,76 @@ object SyncBackup {
         "results_sorting_mode", "viewpager_item_key",
         "app_layout_key",
         "auto_download_plugins_key2",
+        "desktop_start_profile",
     )
 
     private fun String.isTransferable(): Boolean {
         val lower = this.lowercase()
         return !nonTransferableKeys.any { lower.contains(it.lowercase()) }
+    }
+
+    private val accountScopedSections = setOf(
+        "video_pos_dur", "result_resume_watching", "result_resume_watching_2",
+        "result_season", "result_dub", "result_episode", "download_header_cache",
+        "video_watch_state",
+    )
+
+    private class ScopedKey(
+        val account: String,
+        val section: String,
+        val id: String,
+    )
+
+    private fun scopedKey(key: String): ScopedKey? {
+        val parts = key.split("/")
+        if (parts.size < 3) return null
+        val section = parts[1]
+        if (section !in accountScopedSections) return null
+        return ScopedKey(parts[0], section, parts[2])
+    }
+
+    private fun keyIndex(account: String): String? {
+        if (account.isNotEmpty() && account.all { it.isDigit() }) return account
+        return Regex("keyIndex=(\\d+)").find(account)?.groupValues?.get(1)
+    }
+
+    private fun localAccountPrefixes(context: Context): Map<String, String> {
+        val digit = HashMap<String, String>()
+        val other = HashMap<String, String>()
+        val seen = HashMap<String, String>()
+        for (key in context.getSharedPrefs().all.keys + context.getDefaultSharedPrefs().all.keys) {
+            val sc = scopedKey(key) ?: continue
+            val ki = keyIndex(sc.account) ?: continue
+            if (seen.containsKey(ki)) continue
+            seen[ki] = sc.account
+            if (sc.account.all { it.isDigit() }) digit[ki] = sc.account else other[ki] = sc.account
+        }
+        val result = HashMap<String, String>()
+        for (ki in seen.keys) {
+            result[ki] = digit[ki] ?: other[ki] ?: ki
+        }
+        return result
+    }
+
+    private fun localForm(key: String, localPrefixes: Map<String, String>): String {
+        val sc = scopedKey(key) ?: return key
+        val ki = keyIndex(sc.account) ?: return key
+        val prefix = localPrefixes[ki] ?: ki
+        return "$prefix/${sc.section}/${sc.id}"
+    }
+
+    private fun deletionTs(deletions: Map<String, Long>, key: String): Long? {
+        deletions[key]?.let { return it }
+        val sc = scopedKey(key) ?: return null
+        val ki = keyIndex(sc.account) ?: return null
+        for ((delKey, delTs) in deletions) {
+            val delSc = scopedKey(delKey) ?: continue
+            val delKi = keyIndex(delSc.account) ?: continue
+            if (delKi == ki && delSc.section == sc.section && delSc.id == sc.id) {
+                return delTs
+            }
+        }
+        return null
     }
 
     fun classifyKey(key: String): SyncCategory? {
@@ -59,7 +128,8 @@ object SyncBackup {
         }
         if (lowerKey.contains("result_resume_watching") || lowerKey.contains("video_pos_dur") ||
             lowerKey.contains("download_header_cache") || lowerKey.contains("result_season") ||
-            lowerKey.contains("result_dub") || lowerKey.contains("result_episode")
+            lowerKey.contains("result_dub") || lowerKey.contains("result_episode") ||
+            lowerKey.contains("video_watch_state")
         ) {
             return SyncCategory.RESUME_WATCHING
         }
@@ -85,21 +155,25 @@ object SyncBackup {
     fun buildBackup(
         context: Context,
         enabled: Set<SyncCategory>,
+        sanitizeProfiles: Boolean = false,
     ): BackupFile {
         val resumeIndex = buildResumeIndex(context.getSharedPrefs().all)
         val allData = context.getSharedPrefs().all.filter { entry ->
             entry.key.isTransferable() && classifyKey(entry.key) in enabled &&
-                isResumeRelevant(entry.key, resumeIndex)
+                isResumeRelevant(entry.key, entry.value, resumeIndex)
         }
         val allSettings = context.getDefaultSharedPrefs().all.filter { entry ->
             entry.key.isTransferable() && classifyKey(entry.key) in enabled &&
-                isResumeRelevant(entry.key, resumeIndex)
+                isResumeRelevant(entry.key, entry.value, resumeIndex)
         }
+        val settingsData = if (sanitizeProfiles) allSettings.mapValues { (k, v) ->
+            if (k == ACCOUNTS_KEY && v is String) sanitizeProfileAccounts(v) else v
+        } else allSettings
         val deletions = pruneTombstones(SyncStorage.tombstones())
             .filterKeys { key -> key.isTransferable() && classifyKey(key) in enabled }
         return BackupFile(
             datastore = buildVars(allData),
-            settings = buildVars(allSettings),
+            settings = buildVars(settingsData),
             deletions = deletions,
         )
     }
@@ -161,6 +235,7 @@ object SyncBackup {
 
     private fun isResumeRelevant(
         key: String,
+        value: Any?,
         resumeIndex: Map<String, ResumeIndex>,
     ): Boolean {
         val lowerKey = key.lowercase()
@@ -172,8 +247,11 @@ object SyncBackup {
             val id = parts.getOrNull(1)?.toIntOrNull() ?: return false
             return id in index.parentIds
         } else if (lowerKey.contains("video_pos_dur")) {
+            // Las posiciones se sincronizan siempre: alimentan la barra del "Continuar viendo"
+            // (getViewPos(episodeId)) y la reanudación en el player de cualquier episodio.
             val id = parts.getOrNull(2)?.toIntOrNull() ?: return false
-            return id in index.episodeIds
+            if (id !is Int) return false
+            return true
         } else if (lowerKey.contains("result_season") || lowerKey.contains("result_dub") ||
             lowerKey.contains("result_episode")
         ) {
@@ -202,27 +280,44 @@ object SyncBackup {
         restoreVars(context, backupFile.settings, isSettings = true, enabled)
         context.getDefaultSharedPrefs().edit()
             .putInt("auto_download_plugins_key2", 2).apply()
-        applyDeletions(context, backupFile.deletions, enabled)
+        applyDeletions(context, backupFile.deletions, enabled, backupFile)
     }
 
     private fun applyDeletions(
         context: Context,
         deletions: Map<String, Long>,
         enabled: Set<SyncCategory>,
+        mergedBackup: BackupFile?,
     ) {
         if (deletions.isEmpty()) return
         val dataPrefs = context.getSharedPrefs()
         val settingsPrefs = context.getDefaultSharedPrefs()
         val now = SyncTime.nowEpochSeconds()
+        val localPrefixes = localAccountPrefixes(context)
         val dataRemove = mutableListOf<String>()
         val settingsRemove = mutableListOf<String>()
+        val keepKeys = mutableSetOf<String>()
+        if (mergedBackup != null) {
+            mergedBackup.datastore.string?.let { keys -> keepKeys += keys.keys.map { localForm(it, localPrefixes) } }
+            mergedBackup.datastore.bool?.let { keys -> keepKeys += keys.keys.map { localForm(it, localPrefixes) } }
+            mergedBackup.datastore.int?.let { keys -> keepKeys += keys.keys.map { localForm(it, localPrefixes) } }
+            mergedBackup.datastore.long?.let { keys -> keepKeys += keys.keys.map { localForm(it, localPrefixes) } }
+            mergedBackup.datastore.float?.let { keys -> keepKeys += keys.keys.map { localForm(it, localPrefixes) } }
+            mergedBackup.settings.string?.let { keys -> keepKeys += keys.keys }
+            mergedBackup.settings.bool?.let { keys -> keepKeys += keys.keys }
+            mergedBackup.settings.int?.let { keys -> keepKeys += keys.keys }
+            mergedBackup.settings.long?.let { keys -> keepKeys += keys.keys }
+            mergedBackup.settings.float?.let { keys -> keepKeys += keys.keys }
+        }
         for ((key, delTs) in deletions) {
-            if (!key.isTransferable() || classifyKey(key) !in enabled) continue
+            val k = localForm(key, localPrefixes)
+            if (!k.isTransferable() || classifyKey(k) !in enabled) continue
             if (now - delTs >= TOMBSTONE_TTL_SECONDS) continue
-            if (dataPrefs.contains(key)) {
-                if (dataTimestamp(dataPrefs.all[key]) < delTs) dataRemove.add(key)
-            } else if (settingsPrefs.contains(key)) {
-                if (dataTimestamp(settingsPrefs.all[key]) < delTs) settingsRemove.add(key)
+            if (k in keepKeys) continue
+            if (dataPrefs.contains(k)) {
+                if (dataTimestamp(dataPrefs.all[k]) < delTs) dataRemove.add(k)
+            } else if (settingsPrefs.contains(k)) {
+                if (dataTimestamp(settingsPrefs.all[k]) < delTs) settingsRemove.add(k)
             }
         }
         if (dataRemove.isNotEmpty()) {
@@ -254,23 +349,79 @@ object SyncBackup {
     ) {
         val prefs = if (isSettings) context.getDefaultSharedPrefs() else context.getSharedPrefs()
         val editor = prefs.edit()
+        val localPrefixes = if (isSettings) emptyMap() else localAccountPrefixes(context)
+        var restoredPositions = 0
+        var diagSameLogged = 0
+        var diagDiffLogged = 0
 
-        vars.bool?.forEach { (k, v) -> if (k.isTransferable() && classifyKey(k) in enabled) editor.putBoolean(k, v) }
-        vars.int?.forEach { (k, v) -> if (k.isTransferable() && classifyKey(k) in enabled) editor.putInt(k, v) }
-        vars.float?.forEach { (k, v) -> if (k.isTransferable() && classifyKey(k) in enabled) editor.putFloat(k, v) }
-        vars.long?.forEach { (k, v) -> if (k.isTransferable() && classifyKey(k) in enabled) editor.putLong(k, v) }
-        vars.stringSet?.forEach { (k, v) -> if (k.isTransferable() && classifyKey(k) in enabled) editor.putStringSet(k, v) }
+        vars.bool?.forEach { (k, v) ->
+            val mk = localForm(k, localPrefixes)
+            if (mk.isTransferable() && classifyKey(mk) in enabled) editor.putBoolean(mk, v)
+        }
+        vars.int?.forEach { (k, v) ->
+            val mk = localForm(k, localPrefixes)
+            if (mk.isTransferable() && classifyKey(mk) in enabled) editor.putInt(mk, v)
+        }
+        vars.float?.forEach { (k, v) ->
+            val mk = localForm(k, localPrefixes)
+            if (mk.isTransferable() && classifyKey(mk) in enabled) editor.putFloat(mk, v)
+        }
+        vars.long?.forEach { (k, v) ->
+            val mk = localForm(k, localPrefixes)
+            if (mk.isTransferable() && classifyKey(mk) in enabled) editor.putLong(mk, v)
+        }
+        vars.stringSet?.forEach { (k, v) ->
+            val mk = localForm(k, localPrefixes)
+            if (mk.isTransferable() && classifyKey(mk) in enabled) editor.putStringSet(mk, v)
+        }
         vars.string?.forEach { (k, v) ->
-            if (k.isTransferable() && classifyKey(k) in enabled) {
-                val localVal = prefs.getString(k, null)
+            val mk = localForm(k, localPrefixes)
+            if (mk.isTransferable() && classifyKey(mk) in enabled) {
+                val localVal = prefs.getString(mk, null)
                 val cloudTs = SyncKeyPath.extractTimestamp(v)
                 val localTs = SyncKeyPath.extractTimestamp(localVal)
-                if (localVal == null || SyncTime.shouldRestore(cloudTs, localTs)) {
-                    editor.putString(k, v)
+                val cloudNewer = SyncTime.toEpochSeconds(cloudTs) > SyncTime.toEpochSeconds(localTs)
+                val willWrite = localVal == null ||
+                    (localVal != v && (cloudNewer || SyncTime.shouldRestore(cloudTs, localTs))) ||
+                    cloudNewer
+
+                if (mk.contains("video_pos_dur") && !willWrite && localVal != null && diagSameLogged < 3) {
+                    val pos = resumePosition(v)
+                    val dur = resumeDuration(v)
+                    val id = if (pos >= 0.0 && dur > 0.0) mk.split("/").last().toIntOrNull() else null
+                    if (id != null) {
+                        diagSameLogged++
+                        Log.i("SyncStream", "[rw] pos $id: ${(pos / 1000.0).roundToInt()}s / ${(dur / 1000.0).roundToInt()}s, mismo valor")
+                    }
+                }
+
+                if (willWrite) {
+                    val toWrite = if (mk == ACCOUNTS_KEY) graftProfileImages(v, localVal) else v
+                    editor.putString(mk, toWrite)
+                    if (mk.contains("video_pos_dur")) {
+                        val pos = resumePosition(v)
+                        val dur = resumeDuration(v)
+                        val id = if (pos >= 0.0 && dur > 0.0) mk.split("/").last().toIntOrNull() else null
+                        if (id != null) {
+                            runCatching { DataStoreHelper.setViewPos(id, pos.toLong(), dur.toLong()) }
+                                .onSuccess {
+                                    restoredPositions++
+                                    if (diagDiffLogged < 4) {
+                                        diagDiffLogged++
+                                        val prevPos = resumePosition(localVal)
+                                        val prev = if (localVal == null) "antes nada" else if (prevPos >= 0.0) "antes ${(prevPos / 1000.0).roundToInt()}s" else "antes otro valor"
+                                        Log.i("SyncStream", "[rw] pos $id: ${(pos / 1000.0).roundToInt()}s / ${(dur / 1000.0).roundToInt()}s, $prev")
+                                    }
+                                }
+                        }
+                    }
                 }
             }
         }
         editor.apply()
+        if (restoredPositions > 0) {
+            Log.i("SyncStream", "[rw] restore: $restoredPositions posiciones restauradas")
+        }
     }
 
     fun isEmpty(backupFile: BackupFile?): Boolean {
@@ -346,7 +497,10 @@ object SyncBackup {
         for ((key, localVal) in local) {
             val cloudVal = cloud[key]
             if (cloudVal == null) {
-                merged[key] = localVal
+                val delTs = deletionTs(deletions, key)
+                if (delTs == null || delTs <= resumeSiblingTs(key, localStrings)) {
+                    merged[key] = localVal
+                }
             } else {
                 merged[key] = if (
                     cloudValueWins(key, localStrings, cloudStrings, localCategoryTs, cloudPayloadTs)
@@ -355,7 +509,7 @@ object SyncBackup {
         }
         for ((key, cloudVal) in cloud) {
             if (!local.containsKey(key)) {
-                val delTs = deletions[key]
+                val delTs = deletionTs(deletions, key)
                 if (delTs == null || delTs <= resumeSiblingTs(key, cloudStrings)) {
                     merged[key] = cloudVal
                 }
@@ -364,12 +518,6 @@ object SyncBackup {
         return merged
     }
 
-    /**
-     * video_pos_dur and other numeric resume keys carry no timestamp of their own,
-     * so they are resolved using the embedded updateTime of the sibling
-     * result_resume_watching_2 entry for the same parent. Only when no embedded
-     * timestamp exists on either side do we fall back to the draft-level timestamps.
-     */
     private fun cloudValueWins(
         key: String,
         localStrings: Map<String, String>?,
@@ -389,12 +537,17 @@ object SyncBackup {
         if (parts.size < 2) return 0L
         val episodeId = parts[parts.size - 1].toIntOrNull() ?: return 0L
         val account = if (parts[0].all { it.isDigit() }) parts[0] else ""
-        val resumeKey = if (account.isEmpty()) {
-            "result_resume_watching_2/$episodeId"
-        } else {
-            "$account/result_resume_watching_2/$episodeId"
+        val type = if (parts.size >= 3) parts[parts.lastIndex - 1] else ""
+        val siblingType = when (type) {
+            "result_watch_state", "result_watch_state_data" -> "result_watch_state_data"
+            else -> "result_resume_watching_2"
         }
-        return SyncTime.toEpochSeconds(SyncKeyPath.extractTimestamp(stringMap[resumeKey]))
+        val siblingKey = if (account.isEmpty()) {
+            "$siblingType/$episodeId"
+        } else {
+            "$account/$siblingType/$episodeId"
+        }
+        return SyncTime.toEpochSeconds(SyncKeyPath.extractTimestamp(stringMap[siblingKey]))
     }
 
     private fun mergeStringMap(
@@ -415,10 +568,15 @@ object SyncBackup {
         for ((key, localVal) in local) {
             val cloudVal = cloud[key]
             if (cloudVal == null) {
-                merged[key] = localVal
+                val delTs = deletionTs(deletions, key)
+                if (delTs == null || delTs <= episodeTimestampFor(key, local, localEpisodeTs)) {
+                    merged[key] = localVal
+                }
             } else {
                 if (key == ACCOUNTS_KEY) {
-                    merged[key] = if (accountCount(cloudVal) >= accountCount(localVal)) cloudVal else localVal
+                    val cloudWins = accountCount(cloudVal) > accountCount(localVal) ||
+                        (accountCount(cloudVal) == accountCount(localVal) && cloudPayloadTs > localCategoryTs)
+                    merged[key] = if (cloudWins) cloudVal else localVal
                     continue
                 }
                 merged[key] = when (resolveWinner(
@@ -432,7 +590,7 @@ object SyncBackup {
         }
         for ((key, cloudVal) in cloud) {
             if (!local.containsKey(key)) {
-                val delTs = deletions[key]
+                val delTs = deletionTs(deletions, key)
                 if (delTs == null || delTs <= episodeTimestampFor(key, cloud, cloudEpisodeTs)) {
                     merged[key] = cloudVal
                 }
@@ -441,7 +599,6 @@ object SyncBackup {
         return merged
     }
 
-    /** Builds a map episodeId -> latest updateTime from all resume watching entries. */
     private fun buildEpisodeTimestampIndex(stringMap: Map<String, String>): Map<Int, Long> {
         val result = HashMap<Int, Long>()
         for ((key, value) in stringMap) {
@@ -457,11 +614,6 @@ object SyncBackup {
         return result
     }
 
-    /**
-     * Position guard for resume data: an idle device refreshes its embedded updateTime
-     * without changing the position, which would let its stale resume win over the device
-     * that actually kept playing. When both sides report a position and one is meaningfully
-     */
     private enum class Winner { CLOUD, LOCAL }
 
     private fun resolveWinner(
@@ -477,6 +629,61 @@ object SyncBackup {
     ): Winner {
         val lower = key.lowercase()
         val isPositionKey = lower.contains("video_pos_dur") || lower.contains("result_resume_watching")
+        val localTs = episodeTimestampFor(key, localMap, localEpisodeTs)
+        val cloudTs = episodeTimestampFor(key, cloudMap, cloudEpisodeTs)
+
+        if (isPositionKey) {
+            if (lower.contains("result_resume_watching")) {
+                val localEp = resumeEpisodeId(localVal)
+                val cloudEp = resumeEpisodeId(cloudVal)
+                if (localEp != null && cloudEp != null && localEp != cloudEp) {
+                    if (localTs > 0L || cloudTs > 0L) {
+                        return if (cloudTs >= localTs) Winner.CLOUD else Winner.LOCAL
+                    }
+                }
+            }
+
+            val localPos = resumePosition(localVal)
+            val cloudPos = resumePosition(cloudVal)
+            val localDone = isCompletedValue(localPos, resumeDuration(localVal))
+            val cloudDone = isCompletedValue(cloudPos, resumeDuration(cloudVal))
+
+            if (localPos >= 0.0 && cloudPos >= 0.0 && localDone != cloudDone) {
+                val doneIsCloud = cloudDone
+                val rawDoneTs = if (cloudDone) cloudTs else localTs
+                val rawIncompleteTs = if (cloudDone) localTs else cloudTs
+                val doneTs = if (rawDoneTs > 0L) rawDoneTs
+                else if (doneIsCloud) cloudPayloadTs else localCategoryTs
+                val incompleteTs = if (rawIncompleteTs > 0L) rawIncompleteTs
+                else if (doneIsCloud) localCategoryTs else cloudPayloadTs
+
+                if (incompleteTs <= doneTs) {
+                    return if (doneIsCloud) Winner.CLOUD else Winner.LOCAL
+                }
+
+                return if (doneIsCloud) Winner.LOCAL else Winner.CLOUD
+            }
+
+            if (localPos >= 0.0 && cloudPos >= 0.0 && abs(localPos - cloudPos) <= POSITION_LEAD_SECONDS) {
+                if (localDone != cloudDone) {
+                    return if (cloudDone) Winner.CLOUD else Winner.LOCAL
+                }
+                return if (cloudTs > localTs) Winner.CLOUD else Winner.LOCAL
+            }
+        }
+
+        if (localTs > 0L || cloudTs > 0L) {
+
+            if (isPositionKey && abs(cloudTs - localTs) <= POSITION_LEAD_SECONDS.toLong()) {
+                val localPos = resumePosition(localVal)
+                val cloudPos = resumePosition(cloudVal)
+                if (localPos >= 0.0 && cloudPos >= 0.0 && abs(localPos - cloudPos) > POSITION_LEAD_SECONDS) {
+                    return if (cloudPos > localPos) Winner.CLOUD else Winner.LOCAL
+                }
+            }
+            return if (cloudTs > localTs) Winner.CLOUD else Winner.LOCAL
+        }
+
         if (isPositionKey) {
             val localPos = resumePosition(localVal)
             val cloudPos = resumePosition(cloudVal)
@@ -484,13 +691,10 @@ object SyncBackup {
                 return if (cloudPos > localPos) Winner.CLOUD else Winner.LOCAL
             }
         }
-        val localTs = episodeTimestampFor(key, localMap, localEpisodeTs)
-        val cloudTs = episodeTimestampFor(key, cloudMap, cloudEpisodeTs)
-        if (localTs > 0L || cloudTs > 0L) return if (cloudTs > localTs) Winner.CLOUD else Winner.LOCAL
         return if (cloudPayloadTs > localCategoryTs) Winner.CLOUD else Winner.LOCAL
     }
 
-    private fun resumePosition(json: Any?): Double {
+    fun resumePosition(json: Any?): Double {
         if (json !is String) return -1.0
         return try {
             "\"position\":\\s*([\\d.]+)".toRegex().find(json)?.groupValues?.get(1)?.toDouble() ?: -1.0
@@ -499,27 +703,38 @@ object SyncBackup {
         }
     }
 
-    /**
-     * PosDur (video_pos_dur) has no timestamp of its own, so it is resolved using the
-     * updateTime of its sibling result_resume_watching_2 entry. The position guard above
-     * already protects this path from the idle device bumping that updateTime on app open.
-     */
+    fun resumeDuration(json: Any?): Double {
+        if (json !is String) return -1.0
+        return try {
+            "\"duration\":\\s*([\\d.]+)".toRegex().find(json)?.groupValues?.get(1)?.toDouble() ?: -1.0
+        } catch (_: Exception) {
+            -1.0
+        }
+    }
+
+    private fun isCompletedValue(pos: Double, dur: Double): Boolean =
+        pos >= 0.0 && dur > 0.0 && pos >= 0.9 * dur
     private fun episodeTimestampFor(
         key: String,
         stringMap: Map<String, String>,
         episodeTs: Map<Int, Long>,
     ): Long {
-        if (!key.lowercase().contains("video_pos_dur")) {
-            return SyncKeyPath.itemTimestamp(key, SyncCategory.SETTINGS, stringMap)
+        if (key.lowercase().contains("video_pos_dur")) {
+            val parts = key.split("/")
+            val episodeId = parts.getOrNull(parts.lastIndex)?.toIntOrNull() ?: return 0L
+            return episodeTs[episodeId] ?: 0L
         }
-        val parts = key.split("/")
-        val episodeId = parts.getOrNull(parts.lastIndex)?.toIntOrNull() ?: return 0L
-        return episodeTs[episodeId] ?: 0L
+        val category = when {
+            key.lowercase().contains("result_watch_state") -> SyncCategory.BOOKMARKS
+            key.lowercase().contains("result_favorites") -> SyncCategory.BOOKMARKS
+            else -> SyncCategory.SETTINGS
+        }
+        return SyncKeyPath.itemTimestamp(key, category, stringMap)
     }
 
-    private fun resumeEpisodeId(json: String): Int? =
+    fun resumeEpisodeId(json: String): Int? =
         try {
-            "\"episodeId\":\\s*(\\d+)".toRegex().find(json)?.groupValues?.get(1)?.toIntOrNull()
+            "\"episodeId\":\\s*(-?\\d+)".toRegex().find(json)?.groupValues?.get(1)?.toIntOrNull()
         } catch (_: Exception) {
             null
         }
@@ -541,7 +756,6 @@ object SyncBackup {
         return keys
     }
 
-    /** Diagnóstico: timestamp embebido (updateTime) del valor de una clave, en epoch seconds (0 si no tiene). */
     fun debugTs(value: Any?): Long =
         if (value is String) SyncTime.toEpochSeconds(SyncKeyPath.extractTimestamp(value)) else 0L
 
@@ -551,6 +765,57 @@ object SyncBackup {
             resumeMapper.readTree(json).size()
         } catch (_: Exception) {
             0
+        }
+    }
+
+    private fun sanitizeProfileAccounts(json: String): String {
+        return try {
+            val node = resumeMapper.readTree(json)
+            if (!node.isArray) return json
+            node.forEach { profile ->
+                if (profile is ObjectNode) {
+                    val img = profile.get("customImage")?.takeIf { !it.isNull }?.asText()
+                    if (!isPortableImage(img)) profile.putNull("customImage")
+                }
+            }
+            resumeMapper.writeValueAsString(node)
+        } catch (_: Exception) {
+            json
+        }
+    }
+
+    private fun isPortableImage(value: String?): Boolean {
+        if (value.isNullOrBlank()) return false
+        val lower = value.trim().lowercase()
+        return lower.startsWith("http://") || lower.startsWith("https://")
+    }
+
+    private fun graftProfileImages(cloudJson: String, localJson: String?): String {
+        if (localJson.isNullOrBlank()) return cloudJson
+        return try {
+            val cloud = resumeMapper.readTree(cloudJson)
+            val local = resumeMapper.readTree(localJson)
+            if (!cloud.isArray || !local.isArray) return cloudJson
+            val images = HashMap<Int, String>()
+            local.forEach { profile ->
+                if (profile is ObjectNode) {
+                    val idx = profile.get("keyIndex")?.asInt() ?: return@forEach
+                    val img = profile.get("customImage")?.takeIf { !it.isNull }?.asText()
+                    if (!img.isNullOrEmpty()) images[idx] = img
+                }
+            }
+            if (images.isEmpty()) return cloudJson
+            cloud.forEach { profile ->
+                if (profile !is ObjectNode) return@forEach
+                val idx = profile.get("keyIndex")?.asInt() ?: return@forEach
+                val cloudImg = profile.get("customImage")?.takeIf { !it.isNull }?.asText()
+                if (!isPortableImage(cloudImg)) {
+                    images[idx]?.let { profile.put("customImage", it) }
+                }
+            }
+            resumeMapper.writeValueAsString(cloud)
+        } catch (_: Exception) {
+            cloudJson
         }
     }
 

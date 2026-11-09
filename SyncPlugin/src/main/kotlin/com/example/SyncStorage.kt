@@ -77,6 +77,11 @@ object SyncStorage {
         get() = get("sync_force_register") == "true"
         set(value) = set("sync_force_register", value.toString())
 
+    /** Avisos (toasts) visibles aunque haya un reproductor en primer plano. Default: true */
+    var toastDuringPlayback: Boolean
+        get() = get("sync_toast_playback") != "false"
+        set(value) = set("sync_toast_playback", value.toString())
+
     fun isLoggedIn(): Boolean =
         !token.isNullOrBlank() && !projectNum.isNullOrBlank()
 

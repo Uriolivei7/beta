@@ -14,6 +14,8 @@ import android.webkit.JavascriptInterface
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import com.lagradost.cloudstream3.SubtitleFile
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.newSubtitleFile
@@ -139,7 +141,7 @@ open class Cubeembed : ExtractorApi() {
         }
     }
 
-    private suspend fun resolveTurboEmbed(pageUrl: String): TurboEmbedResolved? = withTimeoutOrNull(35_000L) {
+    private suspend fun resolveTurboEmbed(pageUrl: String): TurboEmbedResolved? = withTimeoutOrNull(45_000L) {
         cubeEmbedWebViewMutex.withLock {
             withContext(Dispatchers.Main) {
                 val appContext = pluginContext?.applicationContext ?: return@withContext null
@@ -147,19 +149,23 @@ open class Cubeembed : ExtractorApi() {
                 val result = CompletableDeferred<TurboEmbedResolved?>()
                 val webView = WebView(appContext)
                 var attempts = 0
+                var lastPageUrl = pageUrl
 
                 fun poll() {
                     if (result.isCompleted) return
                     attempts++
                     val script = """(function(){try{
-                        var p=window.jwplayer&&window.jwplayer('media-player');
-                        if(p&&p.getPlaylistItem){var it=p.getPlaylistItem();var f=it&&(it.file||(it.sources&&it.sources[0]&&it.sources[0].file));
-                          if(f&&/^https?:/i.test(f)){NativeBridge.onStream(window.location.href,f);return true;}}
-                        if(!window.__csCubeClicked){window.__csCubeClicked=true;var b=document.querySelector('#player-button,.tvp-poster-play,.tvp-center-play');if(b)b.click();else if(p&&p.play)p.play();}
+                        var u=null,v=document.querySelector('video');
+                        if(v&&v.currentSrc&&/^https?:/i.test(v.currentSrc)){u=v.currentSrc;}
+                        if(!u&&performance&&performance.getEntriesByType){var es=performance.getEntriesByType('resource');for(var i=0;i<es.length;i++){var n=es[i].name;if(n&&n.indexOf('.m3u8')>=0){u=n;break;}}}
+                        if(!u){var p=window.jwplayer&&window.jwplayer('media-player');if(p&&p.getPlaylistItem){var it=p.getPlaylistItem();var f=it&&(it.file||(it.sources&&it.sources[0]&&it.sources[0].file));if(f&&/^https?:/i.test(f)){u=f;}}}
+                        if(u){NativeBridge.onStream(location.href,u);return true;}
+                        var b=document.querySelector('#player-button')||document.querySelector('.tvp-poster-play')||document.querySelector('.tvp-center-play');
+                        if(b){b.click();}else{var v2=document.querySelector('video');if(v2&&v2.paused){try{v2.play();}catch(e){}}}
                         return false;
                     }catch(e){return false;}})()"""
-                    webView.evaluateJavascript(script, null)
-                    if (attempts < 28) handler.postDelayed({ poll() }, 1000L)
+                    try { webView.evaluateJavascript(script, null) } catch (_: Exception) {}
+                    if (attempts < 40) handler.postDelayed({ poll() }, 1000L)
                     else if (!result.isCompleted) result.complete(null)
                 }
 
@@ -179,14 +185,22 @@ open class Cubeembed : ExtractorApi() {
                         }
                     }, "NativeBridge")
                     webView.webViewClient = object : WebViewClient() {
+                        override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                            val u = request?.url?.toString()
+                            if (u != null && u.contains(".m3u8")) {
+                                handler.post { if (!result.isCompleted) result.complete(TurboEmbedResolved(view?.url ?: lastPageUrl, u)) }
+                            }
+                            return null
+                        }
                         override fun onPageFinished(view: WebView?, currentUrl: String?) {
+                            lastPageUrl = currentUrl ?: lastPageUrl
                             val safePage = try {
                                 URL(currentUrl ?: "").let { it.host + it.path }
                             } catch (_: Exception) {
                                 "unknown"
                             }
                             Log.d("Cubeembed", "TurboEmbed page loaded: " + safePage)
-                            handler.postDelayed({ poll() }, 500L)
+                            handler.postDelayed({ poll() }, 700L)
                         }
                     }
                     webView.loadUrl(pageUrl)

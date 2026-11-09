@@ -7,7 +7,12 @@ import android.provider.Settings
 import android.util.Base64
 import com.lagradost.cloudstream3.app
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.serialization.json.Json
 import java.io.ByteArrayInputStream
 import kotlinx.serialization.decodeFromString
@@ -76,7 +81,8 @@ object SyncNetwork {
             val maxChunk = byIndex.keys.maxOrNull() ?: -1
             val listedTotal = maxChunk + 1
             if ((0 until listedTotal).any { byIndex[it] == null }) {
-                log("[restore] $deviceId: gen ${gen ?: "?"} incompleta, chunks=${byIndex.keys.sorted()}")
+                val missing = (0 until listedTotal).count { byIndex[it] == null }
+                log("[restore] $deviceId: gen ${gen ?: "?"} incompleta (faltan $missing de $listedTotal chunks)")
                 continue
             }
             val draft0 = byIndex[0] ?: continue
@@ -99,28 +105,32 @@ object SyncNetwork {
                 return null
             }
             sb.append(data0)
-            for (i in 1 until total) {
-                val draft = byIndex[i]
-                if (draft == null) {
-                    log("[restore] $deviceId: chunk $i/$total no existe")
+
+            val rest: List<String?> = coroutineScope {
+                val sem = Semaphore(6)
+                (1 until total).map { i ->
+                    async {
+                        sem.withPermit {
+                            val draft = byIndex[i]
+                            if (draft == null) null
+                            else {
+                                val chunkId = draft.itemContentId ?: draft.itemId
+                                fetchChunkBody(token, chunkId)?.let { stripChunkHeader(it, i, total) }
+                            }
+                        }
+                    }
+                }.awaitAll()
+            }
+            for ((idx, piece) in rest.withIndex()) {
+                if (piece == null) {
+                    log("[restore] $deviceId: chunk ${idx + 1}/$total no disponible")
                     return null
                 }
-                val chunkId = draft.itemContentId ?: draft.itemId
-                val body = fetchChunkBody(token, chunkId)
-                if (body == null) {
-                    log("[restore] $deviceId: chunk $i/$total fetch falló")
-                    return null
-                }
-                val data = stripChunkHeader(body, i, total)
-                if (data == null) {
-                    log("[restore] $deviceId: chunk $i/$total formato inválido")
-                    return null
-                }
-                sb.append(data)
+                sb.append(piece)
             }
             return sb.toString()
         }
-        log("[restore] $deviceId: ninguna gen completa, intentando best-effort")
+        log("[restore] $deviceId: ninguna gen completa, best-effort")
         return assembleBestEffort(token, drafts, deviceId)
     }
 
@@ -159,12 +169,24 @@ object SyncNetwork {
         val sb = StringBuilder()
         val data0 = stripChunkHeader(body0, 0, realTotal) ?: return null
         sb.append(data0)
-        for (i in 1 until realTotal) {
-            val draft = allByIndex[i]!!
-            val chunkId = draft.itemContentId ?: draft.itemId
-            val body = fetchChunkBody(token, chunkId) ?: return null
-            val data = stripChunkHeader(body, i, realTotal) ?: return null
-            sb.append(data)
+        val rest: List<String?> = coroutineScope {
+            val sem = Semaphore(6)
+            (1 until realTotal).map { i ->
+                async {
+                    sem.withPermit {
+                        val draft = allByIndex[i]!!
+                        val chunkId = draft.itemContentId ?: draft.itemId
+                        fetchChunkBody(token, chunkId)?.let { stripChunkHeader(it, i, realTotal) }
+                    }
+                }
+            }.awaitAll()
+        }
+        for ((idx, piece) in rest.withIndex()) {
+            if (piece == null) {
+                log("[restore] $deviceId: best-effort chunk ${idx + 1}/$realTotal no disponible")
+                return null
+            }
+            sb.append(piece)
         }
 
         val result = sb.toString()
@@ -199,21 +221,19 @@ object SyncNetwork {
         return parts[2]
     }
 
-    @SuppressLint("HardwareIds")
+    @SuppressLint("HardwareIds", "MissingPermission")
     fun getDeviceId(packageName: String, context: Context): String {
         val androidId =
             Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
         if (!androidId.isNullOrEmpty()) return md5(packageName + androidId)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            try {
-                val serial = Build.getSerial()
-                if (!serial.isNullOrEmpty() && serial != "unknown") return md5(packageName + serial)
-            } catch (_: SecurityException) {
-            }
-        } else {
-            val serial = Build.SERIAL
-            if (!serial.isNullOrEmpty() && serial != "unknown") return md5(packageName + serial)
+
+        val serial: String? = try {
+            @Suppress("DEPRECATION")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) Build.getSerial() else Build.SERIAL
+        } catch (_: Exception) {
+            null
         }
+        if (!serial.isNullOrEmpty() && serial != "unknown") return md5(packageName + serial)
         val deviceInfo = "${Build.BRAND}_${Build.MODEL}_${Build.DEVICE}"
         return md5(packageName + UUID.nameUUIDFromBytes(deviceInfo.toByteArray()).toString())
     }
@@ -263,12 +283,15 @@ object SyncNetwork {
     }
 
     suspend fun fetchProjectId(token: String, projectNum: Int): String? {
+        lastError = null
         val query = "query { viewer { projectV2(number: $projectNum) { id } } }"
         val resp = graphql(token, query)
         val id = resp?.data?.viewer?.projectV2?.id
         if (id != null) log("[sync] project #$projectNum ok")
-        // Si resp==null el request falló y graphql() ya guardó la causa real: no sobrescribir
-        else if (resp != null) err("fetchProjectId: no accesible (${resp.errors?.joinToString { it.message ?: "" }})")
+        else if (lastError == null) {
+            val gqlErrs = resp?.errors?.takeIf { it.isNotEmpty() }?.take(2)?.joinToString("; ") { it.message ?: "?" }
+            err("fetchProjectId: no accesible" + (gqlErrs?.let { " [$it]" } ?: ""))
+        }
         return id
     }
 
@@ -288,7 +311,7 @@ object SyncNetwork {
             """.trimIndent()
             val resp = graphql(token, query)
             if (resp == null) {
-                err("fetchDevices: falló la consulta del proyecto")
+                if (lastError == null) err("fetchDevices: falló la consulta del proyecto")
                 return null
             }
             val project = resp.data?.viewer?.projectV2
@@ -320,14 +343,8 @@ object SyncNetwork {
             if (pageInfo?.hasNextPage != true || pageInfo.endCursor.isNullOrEmpty()) break
             cursor = pageInfo.endCursor
         }
-        log("fetchDevices: ${all.size} item(s), ${mainDrafts(all).size} dispositivo(s)")
         return all
     }
-
-    // Título -> (deviceId base, (gen, chunkIndex)); retrocompatible:
-    //  "deviceId"            -> (deviceId, (null, 0))
-    //  "deviceId#3"          -> (deviceId, (null, 3))
-    //  "deviceId#123.0"      -> (deviceId, (123, 0))
     private fun parseDraftTitle(title: String): Pair<String, Pair<Long?, Int>> {
         val idx = title.lastIndexOf('#')
         if (idx <= 0) return title to (null to 0)
@@ -354,19 +371,26 @@ object SyncNetwork {
         chunks: List<String>,
         gen: Long
     ): List<String>? {
-        val ids = mutableListOf<String>()
-        for ((i, chunk) in chunks.withIndex()) {
-            val title = "$deviceName#$gen.$i"
-            val body = makeChunkBody(i, chunks.size, chunk)
-            val (itemId, contentId) = registerSingle(token, projectId, title, body)
-            if (itemId == null || contentId == null) {
-                err("register chunk $i falló: ${SyncNetwork.lastError}")
-                return null
-            }
-            ids.add(contentId)
+
+        val results: List<Pair<Int, String>?> = coroutineScope {
+            val sem = Semaphore(5)
+            chunks.indices.map { i ->
+                async {
+                    sem.withPermit {
+                        val title = "$deviceName#$gen.$i"
+                        val body = makeChunkBody(i, chunks.size, chunks[i])
+                        val (_, contentId) = registerSingle(token, projectId, title, body)
+                        if (contentId == null) {
+                            err("register chunk $i falló: ${SyncNetwork.lastError}")
+                            null
+                        } else i to contentId
+                    }
+                }
+            }.awaitAll()
         }
+        if (results.any { it == null }) return null
         log("[push] register: ${chunks.size} chunks")
-        return ids
+        return results.mapNotNull { it?.second }
     }
 
     private suspend fun registerSingle(
@@ -397,19 +421,34 @@ object SyncNetwork {
         existing: Map<Int, String>,
         gen: Long
     ): Map<Int, String>? {
-        val result = existing.toMutableMap()
-        for ((i, chunk) in chunks.withIndex()) {
-            val title = "$deviceName#$gen.$i"
-            val body = makeChunkBody(i, chunks.size, chunk)
-            val contentId = result[i]
-            if (contentId != null) {
-                if (!updateSingle(token, contentId, title, body)) return null
-            } else {
-                val (itemId, newId) = registerSingle(token, projectId, title, body)
-                if (itemId == null || newId == null) return null
-                result[i] = newId
-            }
+
+        val outcomes: List<Pair<Boolean, String?>> = coroutineScope {
+            val sem = Semaphore(5)
+            chunks.indices.map { i ->
+                async {
+                    sem.withPermit {
+                        val title = "$deviceName#$gen.$i"
+                        val body = makeChunkBody(i, chunks.size, chunks[i])
+                        val contentId = existing[i]
+                        if (contentId != null) {
+                            if (updateSingle(token, contentId, title, body)) {
+                                true to null
+                            } else {
+
+                                val (_, newId) = registerSingle(token, projectId, title, body)
+                                (newId != null) to newId
+                            }
+                        } else {
+                            val (_, newId) = registerSingle(token, projectId, title, body)
+                            (newId != null) to newId
+                        }
+                    }
+                }
+            }.awaitAll()
         }
+        if (outcomes.any { !it.first }) return null
+        val result = existing.toMutableMap()
+        outcomes.forEachIndexed { i, (_, newId) -> newId?.let { result[i] = it } }
         log("[push] update: ${chunks.size} chunks")
         return result
     }
@@ -445,7 +484,6 @@ object SyncNetwork {
         val resp = graphql(token, query)
         val ok = resp?.data?.deleteItem?.deletedItemId != null
         if (!ok) err("deleteDraft($itemId) fallo")
-        else log("[push] draft eliminado")
         return ok
     }
 
@@ -454,29 +492,31 @@ object SyncNetwork {
         projectId: String,
         deviceId: String,
         devices: List<SyncDevice>,
-        removeAll: Boolean = false
+        removeAll: Boolean = false,
     ) {
         val drafts = devices.filter { it.deviceId == deviceId }
         if (drafts.isEmpty()) return
-        val keep = if (removeAll) {
-            emptySet<String>()
+        val stale = if (removeAll) {
+            drafts.toList()
         } else {
-            val anchor = drafts.filter { it.chunkIndex == 0 }.maxByOrNull { it.updatedAt } ?: return
-            val anchorGen = anchor.gen
-            if (anchorGen != null) {
-                drafts.filter { it.gen == anchorGen }.map { it.itemId }.toSet()
-            } else {
-                drafts.filter { kotlin.math.abs(anchor.updatedAt - it.updatedAt) <= 120L }
-                    .map { it.itemId }
-                    .toSet()
+            val bestPerChunk = HashMap<Int, SyncDevice>()
+            for (d in drafts) {
+                val prev = bestPerChunk[d.chunkIndex]
+                val dGen = d.gen ?: 0L
+                val prevGen = prev?.gen ?: 0L
+                if (prev == null || dGen > prevGen || (dGen == prevGen && d.updatedAt > prev.updatedAt)) {
+                    bestPerChunk[d.chunkIndex] = d
+                }
             }
+            drafts.filter { it.itemId != bestPerChunk[it.chunkIndex]?.itemId }
         }
-        val stale = drafts.filter { it.itemId !in keep }
         if (stale.isEmpty()) return
         log("[push] cleanup: ${stale.size} stale drafts de $deviceId")
+        var removed = 0
         for (draft in stale) {
-            deleteDraft(token, projectId, draft.itemId)
+            if (deleteDraft(token, projectId, draft.itemId)) removed++
         }
+        if (removed > 0) log("[push] cleanup: $removed trozo(s) viejos eliminados")
     }
 
     private fun err(msg: String) {
@@ -488,7 +528,6 @@ object SyncNetwork {
         android.util.Log.i(TAG, msg)
     }
 
-    // ISO8601 -> epoch seconds
     fun parseIsoTime(iso: String?): Long {
         if (iso.isNullOrEmpty()) return 0L
         return try {

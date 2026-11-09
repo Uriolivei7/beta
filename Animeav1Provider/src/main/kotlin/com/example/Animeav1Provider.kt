@@ -126,7 +126,6 @@ class Animeav1 : MainAPI() {
         ) {
             TvType.Movie
         } else {
-            // TV Anime, ONA, OVA, Especial, etc. -> Anime/Serie (con episodios)
             TvType.Anime
         }
     }

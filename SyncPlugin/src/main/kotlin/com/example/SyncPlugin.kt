@@ -9,10 +9,12 @@ import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.ViewModelProvider
 import com.lagradost.cloudstream3.CommonActivity.showToast
 import com.lagradost.cloudstream3.MainActivity
 import com.lagradost.cloudstream3.plugins.CloudstreamPlugin
 import com.lagradost.cloudstream3.plugins.Plugin
+import com.lagradost.cloudstream3.ui.home.HomeViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -26,6 +28,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlin.math.roundToInt
 
 @CloudstreamPlugin
 class SyncPlugin : Plugin() {
@@ -42,7 +45,7 @@ class SyncPlugin : Plugin() {
     private var lifecycleCallbacks: Application.ActivityLifecycleCallbacks? = null
 
     @Volatile private var isRestoring = false
-    private val pollMs = 10_000L
+    private val pollMs = 30_000L
     private val syncMutex = Mutex()
 
     @Volatile private var foregroundActivities = 0
@@ -53,20 +56,54 @@ class SyncPlugin : Plugin() {
     @Volatile private var lastResumeMs = 0L
     private var lastPushToastMs = 0L
     @Volatile private var pendingPushToast = false
+    @Volatile private var playerActivities = 0
+    @Volatile private var lastPeriodicResumePushMs = 0L
+
+    private val periodicResumePushMs = 60_000L
+    @Volatile private var lastResumeWriteMs = 0L
+    private val resumeSettleMs = 120_000L
+    @Volatile private var episodeBoundaryPending = false
+    private val lastObservedEpisodeIds = java.util.concurrent.ConcurrentHashMap<String, Int>()
 
     private fun log(msg: String) {
         Log.i(TAG, msg)
     }
 
-    private fun toastSync(msg: String) {
+    private var lastIdleLogMs = 0L
+    private fun logIdle(msg: String) {
+        val now = System.currentTimeMillis()
+        if (now - lastIdleLogMs >= 300_000L) {
+            lastIdleLogMs = now
+            log(msg)
+        }
+    }
+
+    private val lastFailedAssembleMs = HashMap<String, Long>()
+
+    private var consecutivePushFailures = 0
+    private var lastPushAttemptMs = 0L
+
+    private fun isPlayerActivity(activity: Activity): Boolean =
+        activity.javaClass.name.contains("player", ignoreCase = true)
+
+    private fun canShowToast(): Boolean =
+        SyncStorage.toastDuringPlayback || playerActivities == 0
+
+    private fun showToastGated(msg: String) {
+        if (!canShowToast()) return
         Handler(Looper.getMainLooper()).post { showToast(msg) }
+    }
+
+    private fun toastSync(msg: String) {
+        showToastGated(msg)
     }
 
     private fun toastPushSync() {
         val now = System.currentTimeMillis()
         if (now - lastPushToastMs < 180_000L) return
+        if (!canShowToast()) return
         lastPushToastMs = now
-        Handler(Looper.getMainLooper()).post { showToast("Cambios guardados") }
+        showToastGated("Cambios guardados")
     }
 
     private fun maybePushToast() {
@@ -119,6 +156,7 @@ class SyncPlugin : Plugin() {
             if (isRestoring || key == null) return@OnSharedPreferenceChangeListener
             if (prefs.contains(key)) {
                 SyncBackup.removeTombstone(key)
+                detectEpisodeBoundary(prefs, key)
             } else {
                 SyncBackup.recordDeletion(key)
             }
@@ -146,6 +184,7 @@ class SyncPlugin : Plugin() {
 
     private fun markDirty(key: String) {
         val cat = SyncBackup.classifyKey(key) ?: return
+        if (cat == SyncCategory.RESUME_WATCHING) lastResumeWriteMs = System.currentTimeMillis()
         synchronized(dirtyCategories) {
             if (dirtyCategories.add(cat)) {
                 log("[dirty] $cat")
@@ -169,12 +208,52 @@ class SyncPlugin : Plugin() {
         }
     }
 
+    private fun detectEpisodeBoundary(prefs: SharedPreferences, key: String) {
+        val value = prefs.all[key] as? String ?: return
+        val lower = key.lowercase()
+        if (lower.contains("video_pos_dur")) {
+            val pos = SyncBackup.resumePosition(value)
+            val dur = SyncBackup.resumeDuration(value)
+            if (pos >= 0.0 && dur > 0.0 && pos >= 0.9 * dur) {
+                setEpisodeBoundary("ep ${key.substringAfterLast('/')} terminado")
+            }
+            return
+        }
+        if (lower.contains("result_resume_watching_2")) {
+            val parts = key.split("/")
+            if (parts.size != 3) return
+            val ep = SyncBackup.resumeEpisodeId(value) ?: return
+            val last = lastObservedEpisodeIds[parts[0]]
+            if (last != null && last != ep) {
+                setEpisodeBoundary("nuevo episodio $ep")
+            }
+            lastObservedEpisodeIds[parts[0]] = ep
+        } else if (lower.contains("video_watch_state")) {
+            if (value.lowercase().contains("watched")) {
+                setEpisodeBoundary("ep ${key.substringAfterLast('/')} marcado visto")
+            }
+        }
+    }
+
+    private fun setEpisodeBoundary(reason: String) {
+        episodeBoundaryPending = true
+        log("[push] límite de episodio: $reason")
+        if (!SyncStorage.isLoggedIn()) return
+        scope.launch {
+            delay(1_500L)
+            withContext(NonCancellable) {
+                try { runSync() } catch (_: Exception) {}
+            }
+        }
+    }
+
     private fun registerLifecycle() {
         val appCtx = appContext ?: return
         val application = appCtx.applicationContext as? Application ?: return
         lifecycleCallbacks = object : Application.ActivityLifecycleCallbacks {
             override fun onActivityResumed(activity: Activity) {
                 foregroundActivities++
+                if (isPlayerActivity(activity)) playerActivities++
                 lastResumeMs = System.currentTimeMillis()
                 stopSyncJob?.cancel()
                 if (SyncStorage.isLoggedIn()) {
@@ -189,6 +268,7 @@ class SyncPlugin : Plugin() {
             override fun onActivityStarted(activity: Activity) {}
             override fun onActivityPaused(activity: Activity) {
                 foregroundActivities = (foregroundActivities - 1).coerceAtLeast(0)
+                if (isPlayerActivity(activity)) playerActivities = (playerActivities - 1).coerceAtLeast(0)
             }
             override fun onActivityStopped(activity: Activity) {
                 if (!SyncStorage.isLoggedIn()) return
@@ -197,7 +277,7 @@ class SyncPlugin : Plugin() {
                     pendingPushToast = true
                     scope.launch {
                         withContext(NonCancellable) {
-                            try { runSync(forceRestore = true, forcePush = true) } catch (_: Exception) {}
+                            try { runSync(forcePush = true) } catch (_: Exception) {}
                             maybePushToast()
                         }
                     }
@@ -279,12 +359,12 @@ class SyncPlugin : Plugin() {
             lastError = SyncNetwork.lastError
             return
         }
-        log("[sync] fetchDevices: ${devices.size} items, ${SyncNetwork.mainDrafts(devices).size} device(s)")
+        logIdle("[sync] ${devices.size} items, ${SyncNetwork.mainDrafts(devices).size} device(s)")
 
         val ownDevice = SyncNetwork.mainDrafts(devices)
             .filter { it.deviceId == deviceId }
             .maxByOrNull { it.gen ?: it.updatedAt }
-        if (ownDevice != null && !SyncStorage.forceReRegister) {
+        if (ownDevice != null) {
             val ownChunks = devices.filter { it.deviceId == deviceId }
             SyncStorage.ownChunkContentIds = ownChunks
                 .filter { it.itemContentId != null }
@@ -292,11 +372,9 @@ class SyncPlugin : Plugin() {
                 .mapValues { (_, ds) -> ds.maxByOrNull { it.gen ?: it.updatedAt }!!.itemContentId!! }
             SyncStorage.ownItemId = ownDevice.itemId
             SyncStorage.ownContentId = ownDevice.itemContentId
-        } else if (ownDevice == null) {
+        } else {
             SyncStorage.ownItemId = null
             SyncStorage.ownContentId = null
-            SyncStorage.ownChunkContentIds = emptyMap()
-            SyncStorage.forceReRegister = false
         }
 
         val enabledBackup = SyncCategory.entries.filter { it != SyncCategory.SEARCH_HISTORY && SyncStorage.isBackupEnabled(it) }.toSet()
@@ -314,20 +392,38 @@ class SyncPlugin : Plugin() {
                 .sortedByDescending { it.gen ?: it.updatedAt }
 
             if (othersList.isEmpty()) {
-                log("[restore] sin cambios pendientes")
+                logIdle("[restore] sin cambios pendientes")
             } else {
                 isRestoring = true
                 val candidates = mutableMapOf<SyncCategory, MutableList<Pair<SyncDevice, BackupFile>>>()
                 val consumedNow = mutableMapOf<String, Long>()
                 for (other in othersList) {
+                    val nowMs = System.currentTimeMillis()
+                    val lastFail = lastFailedAssembleMs[other.deviceId]
+                    if (lastFail != null && nowMs - lastFail < 120_000L) continue
                     val payload = SyncNetwork.assemblePayload(token, devices, other.deviceId)
-                    val cloudBackup = if (payload == null) null else try {
-                        SyncNetwork.json.decodeFromString(BackupFile.serializer(), SyncNetwork.decompressData(payload))
-                    } catch (_: Exception) { null }
+                    var cloudBackup: BackupFile? = null
+                    if (payload != null) {
+                        val incomingData = SyncNetwork.decompressData(payload)
+                        val isEcho = SyncStorage.lastPushedHash != null &&
+                            SyncBackup.computeHash(incomingData) == SyncStorage.lastPushedHash
+                        if (isEcho) {
+                            log("[restore] ${other.name}: eco propio omitido")
+                            consumedNow[other.deviceId] = other.gen ?: other.updatedAt
+                            continue
+                        }
+                        cloudBackup = try {
+                            SyncNetwork.json.decodeFromString(BackupFile.serializer(), incomingData)
+                        } catch (_: Exception) {
+                            null
+                        }
+                    }
                     if (cloudBackup == null) {
-                        log("[restore] ${other.name}: payload incompleto, se reintentará")
+                        lastFailedAssembleMs[other.deviceId] = nowMs
+                        log("[restore] ${other.name}: backup incompleto, reintentará en 2 min")
                         continue
                     }
+                    lastFailedAssembleMs.remove(other.deviceId)
                     consumedNow[other.deviceId] = other.gen ?: other.updatedAt
                     for (cat in enabledRestore) {
                         val cloudCat = filterBackup(cloudBackup, cat)
@@ -335,25 +431,25 @@ class SyncPlugin : Plugin() {
                         candidates.getOrPut(cat) { mutableListOf() }.add(other to cloudCat)
                     }
                 }
-                if (consumedNow.isNotEmpty()) {
-                    val mergedConsumed = HashMap(SyncStorage.lastRestoredFrom)
-                    consumedNow.forEach { (k, v) -> if (v > (mergedConsumed[k] ?: 0L)) mergedConsumed[k] = v }
-                    SyncStorage.lastRestoredFrom = mergedConsumed
-                }
                 var restoredAny = false
                 var restoredSettings = false
                 var restoredExtensions = false
                 var restoredBookmarks = false
                 var restoredResume = false
                 val restoredSources = mutableMapOf<SyncCategory, SyncDevice>()
+                val dirtySnapshot = synchronized(dirtyCategories) { dirtyCategories.toSet() }
                 try {
                     for (cat in enabledRestore) {
+                        if (cat == SyncCategory.SETTINGS && cat in dirtySnapshot) {
+                            log("[restore] $cat omitido: hay cambios locales sin subir")
+                            continue
+                        }
                         val list = candidates[cat] ?: continue
                         val best = list.maxWithOrNull(
-                            compareBy<Pair<SyncDevice, BackupFile>> {
-                                SyncBackup.getBackupFileKeys(it.second).size
-                            }.thenBy { it.first.updatedAt }
+                            compareBy<Pair<SyncDevice, BackupFile>> { it.first.updatedAt }
+                                .thenByDescending { SyncBackup.getBackupFileKeys(it.second).size }
                         ) ?: continue
+                        log("[restore] $cat: fuente ${best.first.name} (${SyncBackup.getBackupFileKeys(best.second).size} llaves, upd ${best.first.updatedAt})")
                         val (source, cloudCat) = best
                         val localCat = filterBackup(localBackup, cat)
                         val merged = SyncBackup.mergeBackupFiles(
@@ -376,19 +472,34 @@ class SyncPlugin : Plugin() {
                             restoredSources[cat] = source
                         }
                     }
+                } catch (t: Throwable) {
+                    val nowMs = System.currentTimeMillis()
+                    for (srcId in consumedNow.keys) lastFailedAssembleMs[srcId] = nowMs
+                    throw t
                 } finally {
-                    if (!restoredAny) isRestoring = false
+                    isRestoring = false
+                    lastObservedEpisodeIds.clear()
+                }
+                if (consumedNow.isNotEmpty()) {
+                    val mergedConsumed = HashMap(SyncStorage.lastRestoredFrom)
+                    consumedNow.forEach { (k, v) -> if (v > (mergedConsumed[k] ?: 0L)) mergedConsumed[k] = v }
+                    SyncStorage.lastRestoredFrom = mergedConsumed
                 }
                 if (restoredAny) {
                     val cats = restoredSources.keys.joinToString { it.key }
                     val src = restoredSources.values.joinToString { it.name }
                     lastStatus = "Restaurado desde $src"
                     log("[restore] OK: $cats desde $src")
-                    toastSync("Sincronizado: datos actualizados desde otro dispositivo")
+                    val visibleChange = restoredSources.keys.any { it != SyncCategory.SETTINGS }
+                    if (visibleChange) toastSync("Sincronizado: datos actualizados desde otro dispositivo")
                     justRestored = true
-                    val freshBackup = SyncBackup.buildBackup(appCtx, enabledBackup)
+                    val freshBackup = SyncBackup.buildBackup(appCtx, enabledBackup, sanitizeProfiles = true)
                     val freshData = SyncNetwork.json.encodeToString(BackupFile.serializer(), freshBackup)
-                    SyncStorage.lastPushedHash = SyncBackup.computeHash(freshData)
+                    val stillDirty = synchronized(dirtyCategories) {
+                        for (cat in restoredSources.keys) dirtyCategories.remove(cat)
+                        dirtyCategories.isNotEmpty()
+                    }
+                    if (!stillDirty) SyncStorage.lastPushedHash = SyncBackup.computeHash(freshData)
                     Handler(Looper.getMainLooper()).post {
                         try {
                             if (restoredSettings) {
@@ -399,21 +510,21 @@ class SyncPlugin : Plugin() {
                             }
                             if (restoredResume) {
                                 MainActivity.reloadHomeEvent(true)
+                                try {
+                                    activity?.let {
+                                        ViewModelProvider(it)[HomeViewModel::class.java].reloadStored()
+                                    }
+                                } catch (_: Exception) {}
                             }
                             if (restoredBookmarks) {
                                 MainActivity.reloadLibraryEvent(true)
                             }
                         } finally {
                             isRestoring = false
-                            synchronized(dirtyCategories) {
-                                for (cat in restoredSources.keys) {
-                                    dirtyCategories.remove(cat)
-                                }
-                            }
                         }
                     }
                 } else {
-                    log("[restore] sin cambios")
+                    logIdle("[restore] sin cambios")
                 }
             }
         }
@@ -425,7 +536,7 @@ class SyncPlugin : Plugin() {
             return
         }
         if (backupEnabled) {
-            val toPush = SyncBackup.buildBackup(appCtx, enabledBackup)
+            val toPush = SyncBackup.buildBackup(appCtx, enabledBackup, sanitizeProfiles = true)
             if (SyncBackup.isEmpty(toPush)) {
                 lastStatus = "Backup vacío"
                 return
@@ -434,25 +545,86 @@ class SyncPlugin : Plugin() {
                 dirtyCategories.isNotEmpty() && dirtyCategories.all { it == SyncCategory.RESUME_WATCHING }
             }
             if (!forcePush && onlyResumeWatching) {
-                lastStatus = "Esperando cierre de app para push"
-                log("[push] omitido: solo RESUME_WATCHING, esperando background")
-                return
+                if (episodeBoundaryPending) {
+                    log("[push] RESUME_WATCHING: límite de episodio pendiente, push inmediato")
+                } else {
+                    if (System.currentTimeMillis() - lastResumeWriteMs < resumeSettleMs) {
+                        lastStatus = "Avance en curso, push al detenerse"
+                        log("[push] omitido: avance reciente (< ${resumeSettleMs / 1000}s), push al detenerse")
+                        return
+                    }
+                    val since = System.currentTimeMillis() - lastPeriodicResumePushMs
+                    if (since < periodicResumePushMs) {
+                        lastStatus = "Esperando cierre de app para push"
+                        log("[push] omitido: solo RESUME_WATCHING, periódico en ${(periodicResumePushMs - since) / 1000}s")
+                        return
+                    }
+                    log("[push] RESUME_WATCHING: push periódico (${since / 1000}s desde el último)")
+                }
             }
             val data = SyncNetwork.json.encodeToString(BackupFile.serializer(), toPush)
             val hash = SyncBackup.computeHash(data)
             val chunks = SyncNetwork.splitChunks(SyncNetwork.compressData(data))
-            val ownIds = SyncStorage.ownChunkContentIds
 
-            if (ownIds.isEmpty() || SyncStorage.forceReRegister) {
+            if (hash != SyncStorage.lastPushedHash) {
+                val resumeEntries = toPush.datastore.string
+                    ?.filter { it.key.lowercase().contains("result_resume_watching") }
+                    ?.toList()
+                    ?.sortedByDescending { SyncKeyPath.extractTimestamp(it.second) }
+                    ?.take(3)
+                    ?: emptyList()
+                if (resumeEntries.isEmpty()) {
+                    log("[push] re-watch top ep: ninguna result_resume_watching en backup")
+                }
+                for ((key, value) in resumeEntries) {
+                    val account = key.split("/").getOrNull(0) ?: continue
+                    val epId = SyncBackup.resumeEpisodeId(value) ?: continue
+                    val vpdCount = toPush.datastore.string?.keys?.count { it.contains("/video_pos_dur/") } ?: 0
+                    val posVal = toPush.datastore.string?.get("$account/video_pos_dur/$epId")
+                    val anyPos = toPush.datastore.string?.entries?.firstOrNull { it.key.endsWith("/video_pos_dur/$epId") }
+                    val p = if (posVal != null) SyncBackup.resumePosition(posVal) else -1.0
+                    val d = if (posVal != null) SyncBackup.resumeDuration(posVal) else -1.0
+                    val label = when {
+                        posVal == null && anyPos != null -> "vpd en otra cuenta (${anyPos.key.split("/")[0]}): ${(SyncBackup.resumePosition(anyPos.value) / 1000.0).roundToInt()}s"
+                        posVal == null -> "sin video_pos_dur"
+                        p >= 0.0 && d > 0.0 -> "${(p / 1000.0).roundToInt()}s / ${(d / 1000.0).roundToInt()}s"
+                        else -> "formato raro: ${posVal.take(120)}"
+                    }
+                    log("[push] re-watch top ep $epId (vpd en backup=$vpdCount): $label")
+                    log("[push] re-watch card $epId: ${value.take(160)}")
+                }
+            }
+            val myDrafts = devices.filter { it.deviceId == deviceId }
+            val ownGens = myDrafts.mapNotNull { it.gen }.distinct()
+            val ownFragmented = ownGens.size > 1
+
+            val existing = HashMap(SyncStorage.ownChunkContentIds)
+            for (d in myDrafts) {
+                val cid = d.itemContentId ?: d.itemId
+                val index = d.chunkIndex
+                if (cid == null || index < 0) continue
+                if (!existing.containsKey(index)) existing[index] = cid
+            }
+            val ownIds = existing
+            val registerNew = ownIds.isEmpty()
+            val ownNeedsHeal = ownIds.size != chunks.size || ownFragmented
+            if (hash != SyncStorage.lastPushedHash || ownNeedsHeal || registerNew || SyncStorage.forceReRegister) {
+                log("[push] estado: hashIgual=${hash == SyncStorage.lastPushedHash}, ownIds=${ownIds.size}, chunks=${chunks.size}, ownGens=${ownGens.joinToString()}, forceReReg=${SyncStorage.forceReRegister}")
+            }
+
+            if (registerNew) {
                 val newGen = SyncTime.nowEpochSeconds()
                 val ids = SyncNetwork.registerDevice(token, projectId, deviceId, chunks, newGen)
                 if (ids != null) {
+                    consecutivePushFailures = 0
+                    lastPushAttemptMs = System.currentTimeMillis()
                     SyncStorage.ownChunkContentIds = ids.mapIndexed { i, id -> i to id }.toMap()
                     SyncStorage.ownContentId = ids.getOrNull(0)
                     SyncStorage.ownItemId = null
                     SyncStorage.syncGen = newGen
                     SyncStorage.lastPushedHash = hash
                     SyncStorage.forceReRegister = false
+                    if (onlyResumeWatching) lastPeriodicResumePushMs = System.currentTimeMillis()
                     clearDirtyCategories()
                     updateCategoryTimestamps(enabledBackup)
                     lastStatus = "Sync OK (${ids.size} trozo/s)"
@@ -460,19 +632,38 @@ class SyncPlugin : Plugin() {
                     maybePushToast()
                     SyncNetwork.cleanupStaleDrafts(token, projectId, deviceId, devices, removeAll = true)
                 } else {
+                    consecutivePushFailures++
+                    lastPushAttemptMs = System.currentTimeMillis()
                     lastStatus = "No se pudo crear draft"
                     lastError = SyncNetwork.lastError
                     log("[push] ERROR: registerDevice: ${lastError}")
                 }
-            } else if (hash != SyncStorage.lastPushedHash) {
-                val gen = SyncTime.nowEpochSeconds()
+            } else if (hash != SyncStorage.lastPushedHash || ownNeedsHeal || SyncStorage.forceReRegister) {
+                if (consecutivePushFailures >= 3 && !forcePush) {
+                    val since = System.currentTimeMillis() - lastPushAttemptMs
+                    if (since < 90_000L) {
+                        lastStatus = "Sync pendiente (backoff ${(90_000L - since) / 1000}s)"
+                        return
+                    }
+                }
+                val healOnly = hash == SyncStorage.lastPushedHash
+                if (ownFragmented) {
+                    log("[push] chunks propios fragmentados (${ownGens.joinToString()}), heal por update")
+                } else if (ownIds.size != chunks.size) {
+                    log("[push] tamaño propio ${ownIds.size} != ${chunks.size} trozo(s), heal por update")
+                }
+                val gen = if (healOnly) (ownGens.maxOrNull() ?: SyncTime.nowEpochSeconds()) else SyncTime.nowEpochSeconds()
                 val updated = SyncNetwork.updateDevice(token, projectId, deviceId, chunks, ownIds, gen)
                 if (updated != null) {
+                    consecutivePushFailures = 0
+                    lastPushAttemptMs = System.currentTimeMillis()
                     SyncStorage.ownChunkContentIds = updated
                     SyncStorage.ownContentId = updated[0]
                     SyncStorage.ownItemId = null
                     SyncStorage.syncGen = gen
                     SyncStorage.lastPushedHash = hash
+                    SyncStorage.forceReRegister = false
+                    if (onlyResumeWatching) lastPeriodicResumePushMs = System.currentTimeMillis()
                     clearDirtyCategories()
                     updateCategoryTimestamps(enabledBackup)
                     lastStatus = "Sync OK (${updated.size} trozo/s)"
@@ -480,17 +671,15 @@ class SyncPlugin : Plugin() {
                     maybePushToast()
                     SyncNetwork.cleanupStaleDrafts(token, projectId, deviceId, devices)
                 } else {
-                    SyncStorage.ownContentId = null
-                    SyncStorage.ownItemId = null
-                    SyncStorage.ownChunkContentIds = emptyMap()
-                    SyncStorage.forceReRegister = true
+                    consecutivePushFailures++
+                    lastPushAttemptMs = System.currentTimeMillis()
                     lastStatus = "Fallo al actualizar draft"
                     lastError = SyncNetwork.lastError
-                    log("[push] ERROR: updateDevice: ${lastError}")
+                    log("[push] ERROR: updateDevice (intento $consecutivePushFailures): ${lastError}")
                 }
             } else {
                 lastStatus = "Sin cambios que subir"
-                log("[push] omitido: sin cambios")
+                logIdle("[push] sin cambios (hashIgual=true)")
             }
         }
 
@@ -512,6 +701,7 @@ class SyncPlugin : Plugin() {
     }
 
     private fun clearDirtyCategories() {
+        episodeBoundaryPending = false
         synchronized(dirtyCategories) {
             dirtyCategories.clear()
         }
