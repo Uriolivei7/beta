@@ -4215,3 +4215,20 @@ Cascada de 3 fases (timeout total 60000ms):
 - Compilacion: pendiente por el usuario (.\gradlew.bat :LacartoonsProvider:make --console=plain -q). **No compilado por regla del repo.**
 - ⏸️ Pendiente: probar El Chavo T5 cap 30028. Logs clave: [TurboJS] api 200 salt=N, TurboEmbed JW source found (captura), o [TurboJS] no source in payload. Si sale pi 200 en todos los salts pero 
 o source in payload, el objeto descifrado usa otras claves (compartir el JSON para ajustar).
+
+## LacartoonsProvider — Turbovio resuelto con AES directo (08 Nov 2026 v29)
+- **Flujo real descifrado del bundle (deobfuscado con Node)**: NO se usa WebView ni /api/stream?s=. El endpoint correcto es /api/stream/tracking?c=<enc>&pv= y la carga util viene en el **header de respuesta x-tracking** (hex AES-CBC).
+- **Cadena verificada end-to-end (PC)**:
+  1. iframe https://cubeembed.rpmvid.com/#<file1> -> GET https://cubeembed.rpmvid.com/api/public/resolve?file1=<file1> -> {url:"https://turboembed.com/<slug>", file2:<slug>}.
+  2. c = AES/CBC/PKCS5 encrypt(slug, salt=hostname).
+     - key = KEYBASE + (diasDesdeEpoch en hex) -> slice(0,32).padEnd(32,"0").
+     - iv = IVBASE + hex(utf8(hostname)) -> slice(0,32).padEnd(32,"0").
+     - KEYBASE = codepoints hex de keyChars = 1d54a1d53c1d56e1d6811d53c1d6831d4da1d4d41d4e81d7d91d7da1d7db.
+     - IVBASE = codepoints hex de saltChars = 1f5101f5dd1f5111f6aa1f6e126a1.
+  3. GET https://<host>/api/stream/tracking?c=<c> (UA Chrome + Referer pagina + Origin) -> **204** con header x-tracking (hex cifrado).
+  4. decrypt(x-tracking, hostname) -> JSON {"stream":{"hls":"https://.../master.txt",...}}.
+  5. stream.hls (o 	iktok/direct) es la fuente. El CDN **exige Referer https://turboembed.com/** (403 sin el); segmentos seg-N-s1080p-v1.woff2 = fMP4 (200).
+- **Fix v29**: Cubeembed.getUrl reescrito: resuelve slug (cubeembed->resolve; turboembed->path), cifra, llama tracking, lee x-tracking, descifra y emite el hls como M3U8 con headers (UA + Referer https://<host>/ + Origin). Sin WebView. LacartoonsPlugin ya no setea Cubeembed.pluginContext.
+- Versiones a **29** (uild.gradle.kts + plugins.json); ileSize pendiente.
+- Compilacion: pendiente por el usuario (.\gradlew.bat :LacartoonsProvider:make --console=plain -q). **No compilado por regla del repo.**
+- ⏸️ Pendiente: probar El Chavo T5 cap 30028; log Turbovio src host=... + emitted https://.../master.txt. Si el CDN rechaza segmentos por headers, agregar interceptor para esos hosts.
