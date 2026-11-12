@@ -17,7 +17,7 @@ import javax.crypto.spec.SecretKeySpec
 
 class ReanimeProvider : MainAPI() {
     companion object {
-        private const val MAIN_URL = "https://reanime.to"
+        private const val MAIN_URL = "https://reanime.cz"
         private const val FLIX_BASE = "https://flixcloud.cc"
         private const val FLIX_REFERER = "https://flixcloud.cc/"
 
@@ -292,12 +292,12 @@ class ReanimeProvider : MainAPI() {
         return try {
             val resp = app.get("$mainUrl/home", headers = browserHeaders)
             val doc = resp.document
-            val anchors = doc.select("a[href*='/watch/']")
+            val anchors = doc.select("a[href*='/anime/'], a[href*='/watch/']")
             Log.d("Reanime", "getMainPage: code=${resp.code} title='${doc.title()}' anchors=${anchors.size}")
 
             val items = anchors.mapNotNull { el ->
                 val href = el.attr("href") ?: return@mapNotNull null
-                val slug = Regex("""/watch/([a-z0-9\-_]+)""").find(href)?.groupValues?.get(1)
+                val slug = Regex("""(?:/anime/|/watch/)([a-z0-9\-_]+)""").find(href)?.groupValues?.get(1)
                     ?: return@mapNotNull null
                 val img = el.selectFirst("img")
                 val title = img?.attr("alt")?.trim().takeUnless { it.isNullOrBlank() }

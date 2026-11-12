@@ -4232,3 +4232,18 @@ o source in payload, el objeto descifrado usa otras claves (compartir el JSON pa
 - Versiones a **29** (uild.gradle.kts + plugins.json); ileSize pendiente.
 - Compilacion: pendiente por el usuario (.\gradlew.bat :LacartoonsProvider:make --console=plain -q). **No compilado por regla del repo.**
 - ⏸️ Pendiente: probar El Chavo T5 cap 30028; log Turbovio src host=... + emitted https://.../master.txt. Si el CDN rechaza segmentos por headers, agregar interceptor para esos hosts.
+
+## ReanimeProvider — migración de dominio reanime.to → reanime.cz (12 Nov 2026 v2)
+- **Síntoma**: `getMainPage: code=200 title='Re:ANIME — Stream Anime Free Online' anchors=0` y `search 'rascal' fallo: Value <!doctype...`. Todo salía vacío.
+- **Causa raíz**: `reanime.to` **redirige todo** a la raíz de `reanime.cz` (SvelteKit SPA). El provider usaba `reanime.to` y recibía el app-shell HTML en lugar del contenido/API.
+- **Verificado en PC (nuevos endpoints funcionan)**:
+  - `https://reanime.cz/home` (SSR 390 KB): 12 anchors `/watch/<slug>?ep=latest` y 24 `/anime/<slug>`, `img alt` = título, `src` = poster.
+  - `https://reanime.cz/api/v1/search?q=` → JSON `{results:[...]}` (igual que antes).
+  - `https://reanime.cz/api/v1/anime/{slug}` → JSON metadata (anilist_id, title, banner, genres...).
+  - `https://reanime.cz/api/v1/anime/{slug}/episodes?limit=2000` → `{data:[...]}`.
+  - `https://reanime.cz/api/flix/{anilist_id}/{episode}` → `{success, servers:[...]}`.
+- **Fix**: `MAIN_URL` `reanime.to` → `reanime.cz`; `getMainPage` ahora selecciona `a[href*='/anime/']` y `a[href*='/watch/']` y extrae el slug con `(?:/anime/|/watch/)([a-z0-9\-_]+)` (el regex anterior solo miraba `/watch/` y con el query `?ep=latest` funcionaba igual). Sin cambios en load/loadLinks (los endpoints `/api/v1/...` se mantienen en el nuevo dominio).
+- `description`/`iconUrl` de `plugins.json` y las URLs del provider apuntan a `reanime.cz`.
+- Versiones **2** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+- Compilación pendiente por el usuario: ` .\gradlew.bat :ReanimeProvider:make --console=plain -q`.
+- ⏸️ Pendiente en dispositivo: home (secciones Latest/Trending), búsqueda, carga de un anime y reproducción flixcloud (HD-1/HD-2).
