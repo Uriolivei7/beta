@@ -113,19 +113,61 @@ class VeranimeProvider : MainAPI() {
     }
 
     // ------------------------------------------------------------------
+    // Frente al challenge "Just a moment" de Cloudflare: si app.get no
+    // devuelve el HTML real, se reintenta con un WebView (Chromium real).
+    // ------------------------------------------------------------------
+
+    private fun isCfChallenge(html: String): Boolean =
+        html.contains("Just a moment") || html.contains("challenge-platform") ||
+            html.contains("cf-chl") || html.contains("Attention Required")
+
+    private suspend fun getDoc(
+        url: String,
+        timeout: Long,
+        referer: String? = null,
+        logTag: String = "page"
+    ): org.jsoup.nodes.Document? {
+        val resp = try {
+            val headers = if (referer.isNullOrBlank()) browserHeaders
+                else browserHeaders + ("Referer" to referer)
+            app.get(url, headers = headers, timeout = timeout)
+        } catch (e: Exception) {
+            if (e is CancellationException) throw e
+            Log.w(TAG, "[$logTag] app.get falló: ${e.message}")
+            null
+        }
+        val code = resp?.code
+        val body = resp?.text
+        if (resp != null && (code == null || code < 400) && body != null && !isCfChallenge(body)) {
+            Log.d(TAG, "[$logTag] HTTP ${code ?: "?"} len=${body.length}")
+            return resp.document
+        }
+        Log.d(TAG, "[$logTag] HTTP ${code ?: "?"} challenge/error (len=${body?.length ?: 0}), probando WebView")
+        val rendered = renderViaWebView(
+            url, mainUrl,
+            waitMs = 30000L,
+            readyJs = "!!(document.querySelector('article.item')||document.querySelector('.result-item')||document.querySelector('#seasons')||document.querySelector('.se-c')||document.querySelector('.dooplay_player_option'))"
+        )
+        if (rendered.isNullOrBlank()) {
+            Log.w(TAG, "[$logTag] WebView devolvió vacío")
+            return null
+        }
+        if (isCfChallenge(rendered)) {
+            Log.w(TAG, "[$logTag] WebView no superó el challenge")
+            return null
+        }
+        Log.d(TAG, "[$logTag] WebView ok len=${rendered.length}")
+        return Jsoup.parse(rendered, url)
+    }
+
+    // ------------------------------------------------------------------
     // Listados: article.item > div.poster img[data-src] + div.data h3 a
     // ------------------------------------------------------------------
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse? {
         val t0 = System.currentTimeMillis()
         val path = if (page <= 1) request.data else "${request.data}page/$page/"
-        val document = try {
-            app.get("$mainUrl/$path", headers = browserHeaders, timeout = 60L).document
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            Log.w(TAG, "getMainPage ${request.name} falló: ${e.message}")
-            return null
-        }
+        val document = getDoc("$mainUrl/$path", 60L, logTag = "home ${request.name}") ?: return null
         val home = document.select("article.item").mapNotNull { it.toCard() }.distinctBy { it.url }
         val hasNext = document.selectFirst("a[href\$=\"page/${page + 1}/\"]") != null
         Log.d(TAG, "getMainPage ${request.name} page=$page -> ${home.size} items hasNext=$hasNext ${System.currentTimeMillis() - t0}ms")
@@ -167,7 +209,7 @@ class VeranimeProvider : MainAPI() {
         Log.d(TAG, "search() llamado: '$query'")
         return try {
             val encoded = URLEncoder.encode(query, "UTF-8")
-            val doc = app.get("$mainUrl/?s=$encoded", headers = browserHeaders, timeout = 60L).document
+            val doc = getDoc("$mainUrl/?s=$encoded", 60L, logTag = "search") ?: return null
 
             val containers = doc.select("div.result-item")
             val all = if (containers.isNotEmpty()) {
@@ -204,13 +246,7 @@ class VeranimeProvider : MainAPI() {
     override suspend fun load(url: String): LoadResponse? {
         val t0 = System.currentTimeMillis()
         Log.d(TAG, "load($url)")
-        val doc = try {
-            app.get(url, headers = browserHeaders, timeout = 120L).document
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            Log.w(TAG, "load página falló: ${e.message}")
-            return null
-        }
+        val doc = getDoc(url, 120L, logTag = "load") ?: return null
 
         if ("/ver/" in url && "-episodio-" in url) {
             val epTitle = doc.selectFirst("h1")?.text()?.trim()?.takeIf { !it.isNullOrEmpty() }
@@ -489,13 +525,7 @@ class VeranimeProvider : MainAPI() {
         }
 
         val pageUrl = u.substringBefore("?")
-        val doc = try {
-            app.get(u, headers = browserHeaders + ("Referer" to mainUrl), timeout = 120L).document
-        } catch (e: Exception) {
-            if (e is CancellationException) throw e
-            Log.e(TAG, "loadLinks página no disponible: ${e.message}")
-            return false
-        }
+        val doc = getDoc(u, 120L, referer = mainUrl, logTag = "loadLinks") ?: return false
 
         val options = doc.select("li.dooplay_player_option")
         Log.d(TAG, "loadLinks opciones=${options.size}")
