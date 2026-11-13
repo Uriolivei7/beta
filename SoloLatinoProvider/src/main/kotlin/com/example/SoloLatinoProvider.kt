@@ -641,117 +641,126 @@ class SoloLatinoProvider : MainAPI() {
     // Anubis anti-bot (embed69.org)
     // ------------------------------------------------------------------
 
+    private class TinyResp(
+        val code: Int,
+        val body: String,
+        val headerFields: Map<String, List<String>>
+    )
+
+    private suspend fun tinyGet(
+        url: String,
+        headers: Map<String, String>,
+        cookieHeader: String?,
+        timeoutMs: Int = 30000
+    ): TinyResp {
+        return withContext(Dispatchers.IO) {
+            val conn = java.net.URL(url).openConnection() as java.net.HttpURLConnection
+            try {
+                conn.requestMethod = "GET"
+                conn.instanceFollowRedirects = false
+                conn.connectTimeout = timeoutMs
+                conn.readTimeout = timeoutMs
+                for ((k, v) in headers) conn.setRequestProperty(k, v)
+                if (cookieHeader != null) conn.setRequestProperty("Cookie", cookieHeader)
+                val code = conn.responseCode
+                val input = try {
+                    conn.inputStream
+                } catch (_: Exception) {
+                    conn.errorStream
+                }
+                val body = input?.readBytes()?.toString(Charsets.UTF_8) ?: ""
+                val fields = conn.headerFields ?: emptyMap()
+                TinyResp(code, body, fields)
+            } finally {
+                try { conn.disconnect() } catch (_: Exception) {}
+            }
+        }
+    }
+
+    private fun setCookieList(r: TinyResp): List<String> =
+        (r.headerFields["Set-Cookie"] ?: r.headerFields["set-cookie"] ?: emptyList())
+
+    private fun cookieMap(headerValues: List<String>, into: MutableMap<String, String>) {
+        for (line in headerValues) {
+            val assignment = line.substringBefore(";")
+            val eq = assignment.indexOf('=')
+            if (eq <= 0) continue
+            val k = assignment.substring(0, eq).trim()
+            val v = assignment.substring(eq + 1).trim()
+            if (k.isNotBlank()) into[k] = v
+        }
+    }
+
+    private fun buildCookieHeader(cookies: Map<String, String>): String =
+        cookies.entries.joinToString("; ") { (k, v) -> "$k=$v" }
+
     private suspend fun fetchBypassingAnubis(
         pageUrl: String,
         headers: Map<String, String>
     ): Pair<String, org.jsoup.nodes.Document>? {
-        val client = okhttp3.OkHttpClient.Builder()
-            .followRedirects(false)
-            .followSslRedirects(false)
-            .cookieJar(okhttp3.CookieJar.NO_COOKIES)
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(30, TimeUnit.SECONDS)
-            .build()
-
-        fun cookieHeader(cookies: List<String>): String =
-            cookies.map { it.substringBefore(";").trim() }
-                .filter { it.isNotBlank() }
-                .distinct()
-                .joinToString("; ")
-
-        fun setCookies(r: okhttp3.Response): List<String> {
-            val out = mutableListOf<String>()
-            for ((name, value) in r.headers) {
-                if (name.equals("set-cookie", ignoreCase = true)) out.add(value)
+        return try {
+            val r1 = tinyGet(pageUrl, headers, null, 30000)
+            if (!r1.body.contains("anubis_challenge")) {
+                Log.d("SoloLatino", "Anubis: no challenge (HTTP ${r1.code} len=${r1.body.length})")
+                return r1.body to Jsoup.parse(r1.body, pageUrl)
             }
-            return out
-        }
+            Log.d("SoloLatino", "Anubis: challenge detectado en $pageUrl")
 
-        fun exec(url: String, cookieHeader: String?): okhttp3.Response? {
-            val b = okhttp3.Request.Builder().url(url)
-            for ((k, v) in headers) b.addHeader(k, v)
-            if (cookieHeader != null) b.addHeader("Cookie", cookieHeader)
-            return try {
-                client.newCall(b.build()).execute()
-            } catch (e: Exception) {
-                Log.e("SoloLatino", "Anubis: request falló en $url: ${e.message}")
-                null
+            val challengeJson = Regex(
+                """<script id="anubis_challenge" type="application/json">(.*?)</script>""",
+                RegexOption.DOT_MATCHES_ALL
+            ).find(r1.body)?.groupValues?.get(1)
+            if (challengeJson == null) {
+                Log.e("SoloLatino", "Anubis: script de challenge no encontrado")
+                return null
             }
-        }
+            val challengeObj = try { org.json.JSONObject(challengeJson) } catch (_: Exception) { null }
+            val challenge = challengeObj?.optJSONObject("challenge")
+            val rules = challengeObj?.optJSONObject("rules")
+            val id = challenge?.optString("id") ?: ""
+            val randomData = challenge?.optString("randomData") ?: ""
+            val difficulty = challenge?.optInt("difficulty", 0) ?: 0
+            val algorithm = rules?.optString("algorithm", "fast") ?: "fast"
+            if (id.isBlank() || randomData.isBlank() || difficulty <= 0) {
+                Log.e("SoloLatino", "Anubis: challenge incompleto (id=$id diff=$difficulty)")
+                return null
+            }
+            if (algorithm != "fast") {
+                Log.e("SoloLatino", "Anubis: algoritmo no soportado: $algorithm")
+                return null
+            }
+            Log.d("SoloLatino", "Anubis: PoW difficulty=$difficulty")
+            val solved = withContext(Dispatchers.Default) { solveAnubisPow(randomData, difficulty) }
+            if (solved == null) {
+                Log.e("SoloLatino", "Anubis: PoW no resuelto")
+                return null
+            }
+            Log.d("SoloLatino", "Anubis: resuelto nonce=${solved.second}")
 
-        fun bodyOf(r: okhttp3.Response?): String =
-            try { r?.body?.string() ?: "" } catch (_: Exception) { "" }
+            val cookies = linkedMapOf<String, String>()
+            cookieMap(setCookieList(r1), cookies)
+            Log.d("SoloLatino", "Anubis: verificación cookies=[${cookies.keys}]")
 
-        val r1 = exec(pageUrl, null) ?: return null
-        val t0 = System.currentTimeMillis()
-        val body1 = bodyOf(r1)
-        if (!body1.contains("anubis_challenge")) {
-            Log.d("SoloLatino", "Anubis: no challenge (HTTP ${r1.code} len=${body1.length})")
-            r1.close()
-            return body1 to Jsoup.parse(body1, pageUrl)
-        }
-        Log.d("SoloLatino", "Anubis: challenge detectado en $pageUrl")
+            val u = try { java.net.URL(pageUrl) } catch (_: Exception) { null } ?: return null
+            val redir = (u.path ?: "/") + (u.query?.let { "?$it" } ?: "")
+            val passUrl = "${u.protocol}://${u.host}/.within.website/x/cmd/anubis/api/pass-challenge?id=${java.net.URLEncoder.encode(id, "UTF-8")}&response=${java.net.URLEncoder.encode(solved.first, "UTF-8")}&nonce=${solved.second}&redir=${java.net.URLEncoder.encode(redir, "UTF-8")}&elapsedTime=1500"
+            val passHeaders = headers + ("Referer" to pageUrl)
+            val r2 = tinyGet(passUrl, passHeaders, buildCookieHeader(cookies), 20000)
+            Log.d("SoloLatino", "Anubis: pass-challenge HTTP ${r2.code}")
+            cookieMap(setCookieList(r2), cookies)
+            Log.d("SoloLatino", "Anubis: cookies tras pass [${cookies.keys}]")
 
-        val challengeJson = Regex(
-            """<script id="anubis_challenge" type="application/json">(.*?)</script>""",
-            RegexOption.DOT_MATCHES_ALL
-        ).find(body1)?.groupValues?.get(1)
-        if (challengeJson == null) {
-            Log.e("SoloLatino", "Anubis: script de challenge no encontrado")
-            r1.close()
-            return null
+            val r3 = tinyGet(pageUrl, headers + ("Cookie" to buildCookieHeader(cookies)), null, 30000)
+            val ok = r3.code in 200..299 && !r3.body.contains("anubis_challenge")
+            Log.d("SoloLatino", "Anubis: FINAL HTTP ${r3.code} len=${r3.body.length} dataLink=${r3.body.contains("dataLink =")}")
+            if (!ok) return null
+            r3.body to Jsoup.parse(r3.body, pageUrl)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e("SoloLatino", "Anubis: error ${e::class.simpleName}: ${e.message}")
+            null
         }
-        val challenge = try { org.json.JSONObject(challengeJson).optJSONObject("challenge") } catch (_: Exception) { null }
-        val id = challenge?.optString("id") ?: ""
-        val randomData = challenge?.optString("randomData") ?: ""
-        val difficulty = challenge?.optInt("difficulty", 0) ?: 0
-        val rules = try { org.json.JSONObject(challengeJson).optJSONObject("rules") } catch (_: Exception) { null }
-        val algorithm = rules?.optString("algorithm", "fast") ?: "fast"
-        if (id.isBlank() || randomData.isBlank() || difficulty <= 0) {
-            Log.e("SoloLatino", "Anubis: challenge incompleto (id=$id diff=$difficulty)")
-            r1.close()
-            return null
-        }
-        if (algorithm != "fast") {
-            Log.e("SoloLatino", "Anubis: algoritmo no soportado: $algorithm")
-            r1.close()
-            return null
-        }
-        Log.d("SoloLatino", "Anubis: PoW difficulty=$difficulty")
-        val solved = withContext(Dispatchers.Default) { solveAnubisPow(randomData, difficulty) }
-        if (solved == null) {
-            Log.e("SoloLatino", "Anubis: PoW no resuelto")
-            r1.close()
-            return null
-        }
-        Log.d("SoloLatino", "Anubis: resuelto nonce=${solved.second} hash=${solved.first.take(16)}...")
-
-        val cookies1 = setCookies(r1)
-        r1.close()
-
-        val u = try { java.net.URL(pageUrl) } catch (_: Exception) { null }
-        if (u == null) return null
-        val redir = (u.path ?: "/") + (u.query?.let { "?$it" } ?: "")
-        val elapsedMs = (System.currentTimeMillis() - t0).coerceAtLeast(1500L)
-        val passUrl = "${u.protocol}://${u.host}/.within.website/x/cmd/anubis/api/pass-challenge?id=${java.net.URLEncoder.encode(id, "UTF-8")}&response=${java.net.URLEncoder.encode(solved.first, "UTF-8")}&nonce=${solved.second}&redir=${java.net.URLEncoder.encode(redir, "UTF-8")}&elapsedTime=$elapsedMs"
-        val r2 = exec(passUrl, cookieHeader(cookies1)) ?: return null
-        val cookies2 = setCookies(r2)
-        val body2 = bodyOf(r2)
-        val authSet = cookies2.any { it.contains("anubis-auth") }
-        Log.d("SoloLatino", "Anubis: pass-challenge HTTP ${r2.code} cookiesSet=${cookies2.size} auth=$authSet len=${body2.length}")
-        r2.close()
-
-        val allCookies = cookies1 + cookies2
-        val r3 = exec(pageUrl, cookieHeader(allCookies)) ?: return null
-        val body3 = bodyOf(r3)
-        val ok = body3.contains("dataLink =") || body3.contains("POW_CHALLENGE")
-        Log.d("SoloLatino", "Anubis: FINAL HTTP ${r3.code} len=${body3.length} dataLink=${body3.contains("dataLink =")}")
-        r3.close()
-        if (!ok && body3.contains("anubis_challenge")) {
-            Log.e("SoloLatino", "Anubis: sigue bloqueado tras resolver (cookie no aceptada)")
-            return null
-        }
-        return body3 to Jsoup.parse(body3, pageUrl)
     }
 
     private fun solveAnubisPow(randomData: String, difficulty: Int): Pair<String, Long>? {
