@@ -171,7 +171,7 @@ class VeranimeProvider : MainAPI() {
                 val subtitle = card.selectFirst("p.capitulo-card-subtitle")?.text()?.trim()?.takeIf { it.isNotBlank() }
                 val poster = fixUrlNull(card.selectFirst("img.capitulo-card-img")?.attr("src"))
                 out.add(newEpisode(href) {
-                    this.name = subtitle?.let { "E$epNum $it" } ?: "Capítulo $epNum"
+                    this.name = subtitle ?: "Capítulo $epNum"
                     this.episode = epNum
                     this.season = seasonNum
                     this.posterUrl = poster
@@ -192,7 +192,7 @@ class VeranimeProvider : MainAPI() {
                 ?: return null
             val year = Regex("\\d{4}").find(doc.selectFirst(".pelicula-year-line")?.text() ?: "")?.value?.toIntOrNull()
             val ogPoster = doc.selectFirst("meta[property=og:image]")?.attr("content")?.let { fixUrlNull(it) }
-            
+
             val poster = fixUrlNull(doc.selectFirst("img.pelicula-poster-image")?.attr("src"))
                 ?: ogPoster?.takeIf { !isSiteLogo(it) }
             val backdrop = fixUrlNull(doc.selectFirst("img.pelicula-backdrop-image")?.attr("src"))

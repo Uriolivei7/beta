@@ -4292,3 +4292,8 @@ o source in payload, el objeto descifrado usa otras claves (compartir el JSON pa
 - **DecisiÃ³n de alcance**: no se toca `toCard`/`search` (funcionan). No se hizo detecciÃ³n por dimensiones (Jsoup no las conoce) ni peticiÃ³n extra.
 - Versiones a **14** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente, sigue 0).
 - â¸ï¸ **Pendiente**: compilar (`.\gradlew.bat :VeranimeProvider:make --console=plain -q`), subir `.cs3`, actualizar `fileSize`, y **guardar en favoritos Samurai Jack** â†’ debe salir con el backdrop de la serie en vez del logo (si Yoast cambia el fallback del logo, el substring quizÃ¡ haya que ampliarlo).
+
+## VeranimeProvider — quitar prefijo `E$n` del nombre del episodio (12 Nov 2026 v15)
+- **Detalle**: en `load()` el nombre del episodio salía como `E1 E2 ... <nombre>`. El usuario pidió que solo muestre el nombre del episodio.
+- **Fix**: `this.name = subtitle ?: "Capítulo $epNum"` en `parseEpisodes` (antes `"E$epNum $it"`).
+- Versiones a **15** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente sigue 0).
