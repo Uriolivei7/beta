@@ -144,6 +144,9 @@ class VeranimeProvider : MainAPI() {
     // Detalle
     // ------------------------------------------------------------------
 
+    private fun isSiteLogo(url: String): Boolean =
+        url.contains("Gemini_Generated_Image_", ignoreCase = true)
+
     private fun parseRecommendations(doc: Document): List<SearchResponse> =
         doc.select(".anime-recommendation-card").mapNotNull { card ->
             val a = card.selectFirst("a.card-link") ?: return@mapNotNull null
@@ -188,8 +191,10 @@ class VeranimeProvider : MainAPI() {
                 ?: doc.selectFirst("h1.pelicula-title")?.text()?.trim()?.substringBefore("(")?.trim()
                 ?: return null
             val year = Regex("\\d{4}").find(doc.selectFirst(".pelicula-year-line")?.text() ?: "")?.value?.toIntOrNull()
+            val ogPoster = doc.selectFirst("meta[property=og:image]")?.attr("content")?.let { fixUrlNull(it) }
+            
             val poster = fixUrlNull(doc.selectFirst("img.pelicula-poster-image")?.attr("src"))
-                ?: doc.selectFirst("meta[property=og:image]")?.attr("content")?.let { fixUrlNull(it) }
+                ?: ogPoster?.takeIf { !isSiteLogo(it) }
             val backdrop = fixUrlNull(doc.selectFirst("img.pelicula-backdrop-image")?.attr("src"))
             val plot = doc.selectFirst(".pelicula-overview-text")?.text()?.replace("&hellip;", "…")?.trim()
             val tags = doc.selectFirst(".pelicula-meta-generos .pelicula-meta-item")?.text()
@@ -207,8 +212,10 @@ class VeranimeProvider : MainAPI() {
         }
 
         val title = doc.selectFirst("h1.anime-hero-title")?.text()?.trim() ?: return null
-        val poster = doc.selectFirst("meta[property=og:image]")?.attr("content")?.let { fixUrlNull(it) }
         val backdrop = fixUrlNull(doc.selectFirst("img.anime-hero-bg-image")?.attr("src"))
+        val ogPoster = doc.selectFirst("meta[property=og:image]")?.attr("content")?.let { fixUrlNull(it) }
+
+        val poster = ogPoster?.takeIf { !isSiteLogo(it) } ?: backdrop
         val plot = doc.selectFirst("p.anime-hero-description")?.text()?.replace("&hellip;", "…")?.trim()
         val year = Regex("\\d{4}").find(doc.selectFirst(".anime-hero-year")?.text() ?: "")?.value?.toIntOrNull()
         val statusText = doc.selectFirst(".anime-hero-status")?.text()?.lowercase() ?: ""
