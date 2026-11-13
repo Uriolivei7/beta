@@ -495,7 +495,11 @@ class SoloLatinoProvider : MainAPI() {
                         "Accept" to "*/*",
                         "Referer" to fixedSrc,
                     )
-                    val embedResp = app.get(fixedSrc, headers = embed69Headers, timeout = 30L)
+                    val embedResp = fetchBypassingAnubis(fixedSrc, embed69Headers)
+                    if (embedResp == null) {
+                        Log.e("SoloLatino", "embed69 - fetch falló")
+                        return@amap
+                    }
                     var embedHtml = embedResp.text
                     var embedDoc = embedResp.document
                     Log.d("SoloLatino", "embed69 - HTTP ${embedResp.code}, length=${embedHtml.length}")
@@ -631,6 +635,101 @@ class SoloLatinoProvider : MainAPI() {
         if (emitted.get() == 0) Log.e("SoloLatino", "loadLinks 0 links emitidos -> 'enlaces no encontrados'")
 
         return true
+    }
+
+    // ------------------------------------------------------------------
+    // Anubis anti-bot (embed69.org)
+    // ------------------------------------------------------------------
+
+    private suspend fun fetchBypassingAnubis(
+        pageUrl: String,
+        headers: Map<String, String>,
+        firstCookies: Map<String, String> = emptyMap()
+    ): com.lagradost.nicehttp.NiceResponse? {
+        val resp = try {
+            app.get(pageUrl, headers = headers, cookies = firstCookies, timeout = 30L)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Log.e("SoloLatino", "Anubis: GET inicial falló: ${e.message}")
+            null
+        } ?: return null
+        if (!resp.text.contains("anubis_challenge")) return resp
+
+        Log.d("SoloLatino", "fetchBypassingAnubis: challenge detectado en $pageUrl")
+        val challengeJson = Regex(
+            """<script id="anubis_challenge" type="application/json">(.*?)</script>""",
+            RegexOption.DOT_MATCHES_ALL
+        ).find(resp.text)?.groupValues?.get(1)
+        if (challengeJson == null) {
+            Log.e("SoloLatino", "Anubis: script de challenge no encontrado en la página")
+            return resp
+        }
+        val challenge = try { org.json.JSONObject(challengeJson).optJSONObject("challenge") } catch (_: Exception) { null }
+        val id = challenge?.optString("id") ?: ""
+        val randomData = challenge?.optString("randomData") ?: ""
+        val difficulty = challenge?.optInt("difficulty", 0) ?: 0
+        val rules = try { org.json.JSONObject(challengeJson).optJSONObject("rules") } catch (_: Exception) { null }
+        val algorithm = rules?.optString("algorithm", "fast") ?: "fast"
+        if (id.isBlank() || randomData.isBlank() || difficulty <= 0) {
+            Log.e("SoloLatino", "Anubis: challenge incompleto (id=$id diff=$difficulty)")
+            return resp
+        }
+        if (algorithm != "fast") {
+            Log.e("SoloLatino", "Anubis: algoritmo no soportado: $algorithm")
+            return resp
+        }
+        Log.d("SoloLatino", "Anubis: PoW difficulty=$difficulty")
+        val solved = withContext(Dispatchers.Default) { solveAnubisPow(randomData, difficulty) }
+        if (solved == null) {
+            Log.e("SoloLatino", "Anubis: PoW no resuelto")
+            return resp
+        }
+        Log.d("SoloLatino", "Anubis: resuelto nonce=${solved.second} hash=${solved.first.take(16)}...")
+
+        val u = try { java.net.URL(pageUrl) } catch (_: Exception) { null } ?: return resp
+        val redir = (u.path ?: "/") + (u.query?.let { "?$it" } ?: "")
+        val passUrl = "${u.protocol}://${u.host}/.within.website/x/cmd/anubis/api/pass-challenge?id=${java.net.URLEncoder.encode(id, "UTF-8")}&response=${java.net.URLEncoder.encode(solved.first, "UTF-8")}&nonce=${solved.second}&redir=${java.net.URLEncoder.encode(redir, "UTF-8")}&elapsedTime=1500"
+        val passResp = try {
+            app.get(passUrl, headers = headers + ("Referer" to pageUrl), cookies = resp.cookies, timeout = 20L)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Log.e("SoloLatino", "Anubis: pass-challenge falló: ${e.message}")
+            null
+        } ?: return resp
+        val newCookies = resp.cookies + passResp.cookies
+        Log.d("SoloLatino", "Anubis: pass-challenge HTTP ${passResp.code} cookies=${newCookies.keys}")
+        return try {
+            app.get(pageUrl, headers = headers, cookies = newCookies, timeout = 30L)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Log.e("SoloLatino", "Anubis: refetch final falló: ${e.message}")
+            null
+        }
+    }
+
+    private fun solveAnubisPow(randomData: String, difficulty: Int): Pair<String, Long>? {
+        val fullBytes = difficulty / 2
+        val halfNibble = difficulty % 2 == 1
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        val t0 = System.currentTimeMillis()
+        var nonce = 0L
+        val data = randomData.toByteArray(Charsets.UTF_8)
+        while (nonce < 100_000_000L) {
+            if (System.currentTimeMillis() - t0 > 60_000L) return null
+            val input = data + nonce.toString().toByteArray(Charsets.UTF_8)
+            val hash = digest.digest(input)
+            var ok = true
+            for (i in 0 until fullBytes) {
+                if (hash[i] != 0.toByte()) { ok = false; break }
+            }
+            if (ok && halfNibble && (hash[fullBytes].toInt() and 0xF0) != 0) ok = false
+            if (ok) {
+                val hex = hash.joinToString("") { "%02x".format(it) }
+                return hex to nonce
+            }
+            nonce++
+        }
+        return null
     }
 }
 

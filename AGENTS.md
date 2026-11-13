@@ -4297,3 +4297,16 @@ o source in payload, el objeto descifrado usa otras claves (compartir el JSON pa
 - **Detalle**: en `load()` el nombre del episodio salía como `E1 E2 ... <nombre>`. El usuario pidió que solo muestre el nombre del episodio.
 - **Fix**: `this.name = subtitle ?: "Capítulo $epNum"` en `parseEpisodes` (antes `"E$epNum $it"`).
 - Versiones a **15** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente sigue 0).
+
+## SoloLatinoProvider — embeb69.org tras Anubis (PoW v1.28.2) (13 Nov 2026 v43)
+- **Síntoma (log usuario Doctors Who T1E8)**: search/load/Sanctum OK; `loadLinks` devuelve los 3 servidores; embed69 200 len=8288 pero sin `dataLink =` → `embed69 - No se encontró script con 'dataLink ='` → 0 links → "enlaces no encontrados". Los otros 2: pelisserieshoy = página-anuncio (0 correcto); playhydrax = JWPlayer sin fuente accesible.
+- **Causa raíz verificada desde PC**: embed69.org ahora está tras **Anubis** ("¡Asegurándonos de que no eres un robot!", `<script id="anubis_challenge" type="application/json">`): rules `{algorithm:"fast", difficulty:4}`, challenge `{id, randomData, difficulty}`. Mitiga el fetch de HTTP plano (mismo UA que el app).
+- **Protocolo decodificado** (del propio `main.mjs` + `sha256.mjs` del sitio):
+  1. GET página → challenge HTML.
+  2. PoW FAST: buscar `nonce` (string decimal) tal que `SHA-256(randomData + nonce)` tenga los primeros `difficulty/2` bytes en 0x00 (y si difficulty es impar, nibble alto del siguiente byte en 0). difficulty=4 → hash empieza por `0000`. Verificado en vivo: nonce~120k resuelto en ~0.7 s.
+  3. GET `/.within.website/x/cmd/anubis/api/pass-challenge?id=...&response=<hash>&nonce=<nonce>&redir=<path?query>&elapsedTime=<ms>` → 200, setea cookies `techaro.lol-anubis-auth-*` y `techaro.lol-anubis-cookie-verification-*`.
+  4. GET la página con esas cookies → **200 len=67552 con `dataLink =`** (LAT: streamwish/voe/...). Verificado end-to-end desde PC.
+- **Fix (`SoloLatinoProvider.kt`)**: nueva `fetchBypassingAnubis()` usada por la rama embed69: detecta `anubis_challenge` vía regex sobre el `<script id="anubis_challenge">`, resuelve PoW con `solveAnubisPow()` (en `Dispatchers.Default`), hace pass-challenge con cookies, re-fetch con cookies combinadas. Devuelve la página real → el camino existente (`dataLink` + POW_CHALLENGE + AES decriptación) sigue siendo el mismo (sin cambios).
+- **Versiones desalineadas detectadas**: `build.gradle.kts` iba en 40 mientras `plugins.json` ofrecía 42 (nadie había sincronizado). Ambos a **43**. `fileSize` pendiente tras compilar (`.\gradlew.bat :SoloLatinoProvider:make --console=plain -q`).
+- **Pendiente en dispositivo**: instalar v43 y abrir Doctor Who T1E8 (`https://sololatino.net/serie/doctor-who/temporada-1/episodio-8`). Esperado en logcat: `Anubis: PoW difficulty=4` → `Anubis: resuelto nonce=...` → `Anubis: pass-challenge HTTP 200 cookies=[techaro.lol-anubis-auth-..., ...]` → `embed69 - script con dataLink encontrado` → servidores emitidos. Si la página final sigue sin `dataLink`, compartir el log `Anubis:` completo (principalmente `cookies=[]` o `PoW no resuelto`).
+- ~~WebView de 502/Just a moment~~: rama conservada. playhydrax y pelisserieshoy siguen sin emitir (preexistente; no relacionados con Anubis).
