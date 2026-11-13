@@ -4326,3 +4326,11 @@ o source in payload, el objeto descifrado usa otras claves (compartir el JSON pa
 - **Lo IMPORTANTE: la rama Embed69** ahora robusta con try/catch (`CancellationException` se relanza, resto logueado `Anubis: error ...` sin stack trace). Las ramas genéricas siguen imprimiendo `Parent job is Cancelling` (comportamiento normal de CloudStream al cancelar hermanos/timeout).
 - Versiones a **45** (`build.gradle.kts` + `plugins.json`); `fileSize` pendiente.
 - **Pendiente**: compilar (`.\gradlew.bat :SoloLatinoProvider:make --console=plain -q`), actualizar `fileSize`, instalar v45 y probar Doctor Who T1E8. Logs a buscar: `Anubis: challenge detectado` → `Anubis: resuelto nonce=` → `Anubis: verificación cookies=` → `Anubis: pass-challenge HTTP 302` → `Anubis: FINAL HTTP 200 len=67552 dataLink=true` seguido de `embed69 - script con dataLink encontrado`.
+
+## SoloLatinoProvider — embeb69: LINK_CHALLENGE/LINK_SALT en vez de POW_* (13 Nov 2026 v46)
+- **Logs del usuario (v45)**: Anubis ya resuelve (`FINAL HTTP 200 len=6755x dataLink=true`) pero `embed69 - No se pudo extraer POW_CHALLENGE/SALT de la página` → 0 links otra vez.
+- **Diagnóstico desde PC**: la página embed69 cambió el nombre de las constantes — ya NO vienen `POW_CHALLENGE`/`POW_SALT`, ahora son **`LINK_CHALLENGE`** (`7b86265f...`) y **`LINK_SALT`** (`6d07665b...`), y la clave AES es **`SHA-256(LINK_CHALLENGE + LINK_SALT)[:32]`** (sin PoW previo); AES-CBC, iv = primeros 16 bytes del base64 decodificado, PKCS7.
+- **Verificado desde PC**: descifrando los tres servidores del episodio `tt0436992-1x08`: `streamwish → hglink.to/e/fj6ez1tbc57z`, `voe → voe.sx/e/zlnsdkv6dqv1`, `vidhide → morencius.com/embed/hrke79ik4vnc`.
+- **Fix**: el extractor ahora lee `LINK_CHALLENGE`/`LINK_SALT` (primeras regex) con fallback a `POW_*` (PoW original, sin cambios). `aesKey` se deriva según la rama (sin PoW para `LINK_*`, PoW para `POW_*` legacy). WebView `readyJs` acepta ambos.
+- Versiones a **46** (`build.gradle.kts` + `plugins.json`); `fileSize` pendiente.
+- ⏸️ **Pendiente**: compilar, instalar v46 y abrir Doctor Who T1E8 de nuevo. Esperado: `embed69 - AES key derivada, decrypting 3 links` → `embed69 - decrypted: ...` → vidHidePro/Voe/StreamWish emitiendo.

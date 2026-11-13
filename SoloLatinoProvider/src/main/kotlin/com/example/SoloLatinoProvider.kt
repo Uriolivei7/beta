@@ -511,7 +511,7 @@ class SoloLatinoProvider : MainAPI() {
                             pageUrl = fixedSrc,
                             referer = targetUrl,
                             waitMs = 12000L,
-                            readyJs = "h.includes('dataLink =')&&h.includes('POW_CHALLENGE')&&h.includes('POW_SALT')"
+                            readyJs = "h.includes('dataLink =')&&(h.includes('POW_CHALLENGE')||h.includes('LINK_CHALLENGE'))"
                         )
                         if (!browserHtml.isNullOrBlank()) {
                             embedHtml = browserHtml
@@ -542,25 +542,36 @@ class SoloLatinoProvider : MainAPI() {
                             ?: resolveDataLinkExpr(dataLinkJson)?.let { tryParseJson<List<ServersByLang>>(it) }
 
                         val pageHtml = embedHtml
-                        val embedChallenge = Regex("""POW_CHALLENGE\s*=\s*'([^']+)'""").find(pageHtml)?.groupValues?.get(1)
-                        val embedSalt = Regex("""POW_SALT\s*=\s*'([^']+)'""").find(pageHtml)?.groupValues?.get(1)
+                        val linkChallenge = Regex("""LINK_CHALLENGE\s*=\s*'([^']+)'""").find(pageHtml)?.groupValues?.get(1)
+                        val linkSalt = Regex("""LINK_SALT\s*=\s*'([^']+)'""").find(pageHtml)?.groupValues?.get(1)
+                        val legacyChallenge = Regex("""POW_CHALLENGE\s*=\s*'([^']+)'""").find(pageHtml)?.groupValues?.get(1)
+                        val legacySalt = Regex("""POW_SALT\s*=\s*'([^']+)'""").find(pageHtml)?.groupValues?.get(1)
+                        val embedChallenge = linkChallenge ?: legacyChallenge
+                        val embedSalt = linkSalt ?: legacySalt
                         if (embedChallenge == null || embedSalt == null) {
-                            Log.e("SoloLatino", "embed69 - No se pudo extraer POW_CHALLENGE/SALT de la página")
+                            Log.e("SoloLatino", "embed69 - No se pudo extraer LINK_CHALLENGE/SALT (ni POW_*) de la página")
                             return@amap
                         }
-                        Log.d("SoloLatino", "embed69 - challenge=$embedChallenge salt=$embedSalt")
+                        Log.d("SoloLatino", "embed69 - challenge=$embedChallenge salt=$embedSalt modo=${if (linkChallenge != null) "LINK" else "POW-legacy"}")
 
                         serversList?.amap { lang ->
                             val encryptedLinks = lang.sortedEmbeds.mapNotNull { it.link }
                             if (encryptedLinks.isEmpty()) return@amap
                             Log.d("SoloLatino", "embed69 - ${encryptedLinks.size} enlaces encriptados para ${lang.videoLanguage}")
 
-                            val aesKey = withContext(Dispatchers.Default) { solveEmbed69PoW(embedChallenge, embedSalt) }
+                            val aesKey = if (linkChallenge != null) {
+                                // Nuevo algoritmo (sin PoW): aesKey = SHA-256(LINK_CHALLENGE + LINK_SALT)[:32]
+                                java.security.MessageDigest.getInstance("SHA-256")
+                                    .digest((embedChallenge + embedSalt).toByteArray(Charsets.UTF_8))
+                            } else {
+                                // Legado: PoW + SHA-256(challenge + nonce + salt)
+                                withContext(Dispatchers.Default) { solveEmbed69PoW(embedChallenge, embedSalt) }
+                            }
                             if (aesKey == null) {
-                                Log.e("SoloLatino", "embed69 - PoW failed")
+                                Log.e("SoloLatino", "embed69 - fallo al derivar AES key (challenge=${embedChallenge.take(8)}...)")
                                 return@amap
                             }
-                            Log.d("SoloLatino", "embed69 - PoW solved, decrypting ${encryptedLinks.size} links")
+                            Log.d("SoloLatino", "embed69 - AES key derivada, decrypting ${encryptedLinks.size} links")
                             val langTag = when (lang.videoLanguage?.uppercase()) {
                                 "LAT" -> "LATINO"
                                 "SUB", "ENGLISH" -> "SUBTITULADO"
