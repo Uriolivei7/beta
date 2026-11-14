@@ -13,6 +13,9 @@ import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.json.JSONObject
 import org.jsoup.nodes.Document
 import org.jsoup.nodes.Element
+import okhttp3.Interceptor
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.Response
 import java.net.URLEncoder
 
 @Serializable
@@ -50,6 +53,8 @@ data class KimeraSeason(
     val id: Int,
     val content_id: Int,
     val name: String?,
+    val number: Double?,
+    val short_tag: String?,
     val date: String?,
     val items: List<KimeraEpisode>?,
 )
@@ -150,6 +155,8 @@ class KimerawebProvider : MainAPI() {
             ?: titleJson?.id ?: return null
         val poster = fixUrlNull(doc.selectFirst("div[data-action='view-image'] img[data-src]")?.attr("data-src"))
         val backdrop = fixUrlNull(doc.selectFirst("div.image-radial-gdr img[data-src]")?.attr("data-src"))
+        Log.d("Kimera", "load POSTER=$poster BACKDROP=$backdrop TITLE=$title")
+        Log.d("Kimera", "load POSTER_EL=${doc.selectFirst("div[data-action='view-image'] img[data-src]")?.attr("outerHTML")?.take(200)}")
         val synopsis = doc.selectFirst("h2:containsOwn(Sinopsis)")?.nextElementSibling()?.selectFirst("p")?.text()?.trim()
             ?: doc.selectFirst("p.flex.column.wt-100.ht-100")?.text()?.trim()
         val tags = titleJson?.tags?.mapNotNull { it.name }?.takeIf { it.isNotEmpty() }
@@ -168,7 +175,10 @@ class KimerawebProvider : MainAPI() {
             val data = tryParseJson<KimeraContent>(seasonsJson) ?: return null
             val all = mutableListOf<Episode>()
             for (season in data.seasons.orEmpty()) {
-                val seasonNum = Regex("""(\d+)""").find(season.name ?: "")?.groupValues?.get(1)?.toIntOrNull() ?: 1
+                val seasonNum = season.number?.toInt()
+                    ?: Regex("""(\d+)""").find(season.short_tag ?: "")?.groupValues?.get(1)?.toIntOrNull()
+                    ?: Regex("""(\d+)""").find(season.name ?: "")?.groupValues?.get(1)?.toIntOrNull()
+                    ?: 1
                 for (ep in season.items.orEmpty()) {
                     val epNum = ep.number?.toInt() ?: continue
                     val epUrl = ep.url?.let { mainUrl + it } ?: continue
@@ -274,5 +284,43 @@ class KimerawebProvider : MainAPI() {
         }
         Log.e("Kimera", "loadLinks $data -> emitidos=$count")
         return count > 0
+    }
+
+    // ------------------------------------------------------------------
+    // Interceptor: el CDN sirve init+segmentos fMP4 con un prefijo `<!--IGCF1` (22 bytes).
+    // Lo quitamos para que ExoPlayer obtenga un MP4 fragment limpio reproducible.
+    // ------------------------------------------------------------------
+
+    @Suppress("ObjectLiteralToLambda")
+    override fun getVideoInterceptor(extractorLink: ExtractorLink): Interceptor? {
+        return object : Interceptor {
+            override fun intercept(chain: Interceptor.Chain): Response {
+                val request = chain.request()
+                if (request.url.host != "cloudcdn.sbs") return chain.proceed(request)
+                if (!request.url.encodedPath.startsWith("/media/stream/")) return chain.proceed(request)
+                val response = chain.proceed(request)
+                return try {
+                    val body = response.body ?: return response
+                    val bytes = body.bytes()
+                    if (bytes.size < 22) return response
+                    val head = String(bytes, 0, 9, Charsets.UTF_8)
+                    if (head != "<!--IGCF1") {
+                        return response
+                    }
+                    val stripped = bytes.copyOfRange(22, bytes.size)
+                    val contentType = "application/octet-stream".toMediaTypeOrNull()
+                    response.newBuilder()
+                        .removeHeader("Content-Length")
+                        .removeHeader("Content-Type")
+                        .header("Content-Length", stripped.size.toString())
+                        .header("Content-Type", "application/octet-stream")
+                        .body(okhttp3.ResponseBody.create(contentType, stripped))
+                        .build()
+                } catch (e: Exception) {
+                    Log.w("Kimera", "interceptor error: ${e.message}")
+                    response
+                }
+            }
+        }
     }
 }

@@ -1,11 +1,11 @@
-// use an integer for version numbers
-version = 1
+﻿// use an integer for version numbers
+version = 2
 
 
 cloudstream {
     // All of these properties are optional, you can safely remove them
 
-    description = "Kimera — catálogo de series, animes, dramas y películas"
+    description = "Kimera â€” catÃ¡logo de series, animes, dramas y pelÃ­culas"
     language    = "es"
     authors = listOf("Ranita")
 

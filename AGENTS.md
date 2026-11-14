@@ -4376,3 +4376,14 @@ Sitio: `https://kimeraweb.com` (índice de series, animes, dramas, películas y 
   5. detalle película Corazón de la Bestia;
   6. reproducir ambos tipos; `Referer` se inyecta al CDN; si el CDN exige headers especiales en segmentos, ajustar interceptor ahi.
 - Archivos tocados: `KimerawebProvider/build.gradle.kts`, `KimerawebProvider/src/main/AndroidManifest.xml`, `KimerawebProvider/src/main/kotlin/com/example/KimerawebPlugin.kt`, `KimerawebProvider/src/main/kotlin/com/example/KimerawebProvider.kt`, `plugins.json`, `AGENTS.md`.
+
+## KimerawebProvider — Fix temporadas + interceptor IGCF1 (14 Nov 2026 v2)
+- **Síntomas reportados (v1)**:
+  1. Solo se muestra la temporada 1 en series con varias temporadas.
+  2. Al reproducir sale **`ERROR_CODE_PARSING_CONTAINER_MALFORMED (3001)`** ("Cannot find sync byte. Most likely not a Transport Stream").
+- **Causa raíz 1**: el API `/api/titles/{id}/content?sort=asc&page=1` devuelve `seasons:[{number, short_tag, id, items}]` donde `season.name` es SIEMPRE `\"Temporada\"` (sin dígitos). El parser `(\d+)` sobre `season.name` siempre devolvía 1 → todas las eps quedaban en temporada 1.
+  - **Fix**: `KimeraSeason` añade `number` (Double?) y `short_tag`; `seasonNum = season.number?.toInt()` con fallback a `season.short_tag`/`season.name`.
+- **Causa raíz 2**: cada parte del HLS VOD (init map `.EXT-X-MAP` + cada uno de los **869 segmentos**) viene envuelta con el prefijo `<!--IGCF1` (22 bytes: `3c 21 2d 2d 49 47 43 46 31` + 13 bytes de metadata), excepto que el CDN siempre devuelve `Content-Type: text/html` en las partes. ExoPlayer con `.html` (extensión desconocida) cae en TS parser → error 3001.
+  - **Fix**: `getVideoInterceptor()` — interceptor OkHttp que (1) matchea host `cloudcdn.sbs` + path `/media/stream/`, (2) lee el body entero, (3) si empieza por `<!--IGCF1`, descarta los primeros 22 bytes y (4) devuelve el body limpio con `Content-Type: application/octet-stream` (imitando un `.iso5` stream iso5-ish de Fragmented MP4). El master `/media/video/{id}` (con `application/vnd.apple.mpegurl`) pasa intacto.
+- **Pendiente**: compilar y probar HLS VOD dentro de Merlin T1E1 y mostrar los 5 seasons numerados 1..5.
+- Versión **2** (`build.gradle.kts` + `plugins.json`; `fileSize` sigue pendiente, sigue 0).
