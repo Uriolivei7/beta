@@ -296,18 +296,19 @@ class KimerawebProvider : MainAPI() {
         return object : Interceptor {
             override fun intercept(chain: Interceptor.Chain): Response {
                 val request = chain.request()
-                if (request.url.host != "cloudcdn.sbs") return chain.proceed(request)
-                if (!request.url.encodedPath.startsWith("/media/stream/")) return chain.proceed(request)
+                val url = request.url.toString()
+                Log.d("Kimera", "[intercept] path=${request.url.encodedPath}")
+                if (request.url.host != "cloudcdn.sbs") { Log.d("Kimera", "[intercept] no es cloudcdn.sbs (${request.url.host})"); return chain.proceed(request) }
+                if (!request.url.encodedPath.startsWith("/media/stream/")) { Log.d("Kimera", "[intercept] no es /media/stream/*.html"); return chain.proceed(request) }
                 val response = chain.proceed(request)
                 return try {
                     val body = response.body ?: return response
                     val bytes = body.bytes()
-                    if (bytes.size < 22) return response
+                    if (bytes.size < 22) { Log.w("Kimera", "[intercept] body too small len=${bytes.size}"); return response }
                     val head = String(bytes, 0, 9, Charsets.UTF_8)
-                    if (head != "<!--IGCF1") {
-                        return response
-                    }
+                    if (head != "<!--IGCF1") { Log.w("Kimera", "[intercept] no prefix head=${bytes.take(16).joinToString(",") { "%02X".format(it) }}"); return response }
                     val stripped = bytes.copyOfRange(22, bytes.size)
+                    Log.d("Kimera", "[intercept] strip ok len=${bytes.size}->${stripped.size} type=${request.url.query}")
                     val contentType = "application/octet-stream".toMediaTypeOrNull()
                     response.newBuilder()
                         .removeHeader("Content-Length")
@@ -317,7 +318,7 @@ class KimerawebProvider : MainAPI() {
                         .body(okhttp3.ResponseBody.create(contentType, stripped))
                         .build()
                 } catch (e: Exception) {
-                    Log.w("Kimera", "interceptor error: ${e.message}")
+                    Log.w("Kimera", "[intercept] error: ${e.message}")
                     response
                 }
             }
