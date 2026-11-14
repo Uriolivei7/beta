@@ -1506,5 +1506,25 @@
   "iconUrl": "https://modlyo.com/magis_web/assets/icon-192.png",
   "language": "mx",
   "fileSize": 0
+ },
+ {
+  "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/KimerawebProvider.cs3",
+  "status": 1,
+  "version": 1,
+  "apiVersion": 1,
+  "name": "Kimera",
+  "internalName": "KimerawebProvider",
+  "authors": [
+   "Ranita"
+  ],
+  "description": "https://kimeraweb.com/",
+  "tvTypes": [
+   "Anime",
+   "TvSeries",
+   "Movie"
+  ],
+  "iconUrl": "https://kimeraweb.com/apple-touch-icon.png",
+  "language": "mx",
+  "fileSize": 0
  }
 ]
