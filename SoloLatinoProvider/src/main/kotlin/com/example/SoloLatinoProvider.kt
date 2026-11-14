@@ -560,11 +560,11 @@ class SoloLatinoProvider : MainAPI() {
                             Log.d("SoloLatino", "embed69 - ${encryptedLinks.size} enlaces encriptados para ${lang.videoLanguage}")
 
                             val aesKey = if (linkChallenge != null) {
-                                // Nuevo algoritmo (sin PoW): aesKey = SHA-256(LINK_CHALLENGE + LINK_SALT)[:32]
+
                                 java.security.MessageDigest.getInstance("SHA-256")
                                     .digest((embedChallenge + embedSalt).toByteArray(Charsets.UTF_8))
                             } else {
-                                // Legado: PoW + SHA-256(challenge + nonce + salt)
+
                                 withContext(Dispatchers.Default) { solveEmbed69PoW(embedChallenge, embedSalt) }
                             }
                             if (aesKey == null) {

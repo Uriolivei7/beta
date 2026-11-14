@@ -4334,3 +4334,45 @@ o source in payload, el objeto descifrado usa otras claves (compartir el JSON pa
 - **Fix**: el extractor ahora lee `LINK_CHALLENGE`/`LINK_SALT` (primeras regex) con fallback a `POW_*` (PoW original, sin cambios). `aesKey` se deriva según la rama (sin PoW para `LINK_*`, PoW para `POW_*` legacy). WebView `readyJs` acepta ambos.
 - Versiones a **46** (`build.gradle.kts` + `plugins.json`); `fileSize` pendiente.
 - ⏸️ **Pendiente**: compilar, instalar v46 y abrir Doctor Who T1E8 de nuevo. Esperado: `embed69 - AES key derivada, decrypting 3 links` → `embed69 - decrypted: ...` → vidHidePro/Voe/StreamWish emitiendo.
+
+## KimerawebProvider — Plugin nuevo (Kimera) (14 Nov 2026 v1)
+
+Sitio: `https://kimeraweb.com` (índice de series, animes, dramas, películas y donghuas; CDN en `cloudcdn.sbs`).
+
+### Arquitectura verificada (PC)
+| Parte | Ruta / markup | Endpoint |
+|---|---|---|
+| Home | `/` | Tarjetas server-side: `figure > a[href^='/movies/'|'/series/'|...] > img[data-src alt] + figcaption` |
+| Secciones (getMainPage) | `/movies/`, `/series/`, `/animes/`, `/dramas/`, `/donghuas/` | mismas tarjetas (`figure` con `a[href]`) |
+| Busqueda | `/catalog?q={q}` | mismas tarjetas server-side; `data-catalog-card` y `data-title-id` opcionales |
+| Detalle | `/series/{slug}/`, `/movies/{slug}/` | `h1` titulo, `div[data-action="view-image"] > img[data-src]` póster, `div.image-radial-gdr img` backdrop, sinopsis en `h2:containsOwn(Sinopsis)`, `script[data-element="title-data"]` con JSON (tags, status, release_date, id, trailer_url, alternate_names) |
+| Episodios (series) | `/api/titles/{id}/content?sort=asc&page=N[&season_id=S]` | JSON `{seasons:[{id, items:[{number, name, url, season_tag, thumbnail_url}]}], has_next, next_page, page, per_page}` — paginado 30/pg; usar `season_id` por temporada |
+| Reproduccion | `/series/{slug}/watch/{id}/season-N/episode-M` o `/movies/{slug}/watch` | `<script id="content-data" type="application/json">` con `{title, item, playback:[{playback_options:[{url, video_id, type, failed, active, name, audio_tracks, subtitles}]}], navigation}` |
+| CDN video | `https://cloudcdn.sbs/media/video/{video_id}` | HLS master VOD (fMP4 `.html`), 200 `application/vnd.apple.mpegurl` **sin challenge** para User-Agent navegador |
+
+### Implementacion
+- `getMainPage`: 5 secciones (Películas, Series, Animes, Dramas, Donghuas) desde los indexes; cada fila = `figure` cards con al menos un `a[href]` interno y un `img[data-src]`; tipo deducido del prefix (`/movies/` → `Movie`, `/series/`|`/dramas/` → `TvSeries`, resto → `Anime`).
+- `search()`: `/catalog?q=` paginado? (en PC no pagina por defecto; parametrizar si se detecta más de 30 resultados).
+- `load()`: movie → `newMovieLoadResponse(title, url, TvType.Movie, url)`; series → `newTvSeriesLoadResponse(..., TvType.TvSeries, eps)` con episodios de `/api/titles/{id}/content?sort=asc&page=N&season_id=S` paginando por temporada (`has_next`).
+- Episodios con `season` = `season_tag`→ entero `T1`→1; `episode` = `number.toInt()`; URL = `mainUrl + ep.url`; poster `thumbnail_url` si existe.
+- `loadLinks()`: **sin extractores ni cookies** — lee el JSON `#content-data` embedido en la página watch, itera `playback[].playback_options[]`, descarta `failed==true`, emite `newExtractorLink(..., ExtractorLinkType.M3U8)` por cada opción con `video_id` apuntando directo a `cloudcdn.sbs` (HLS/FMP4 VOD).
+- `#content-data` en la página de película (`/movies/{slug}/watch`) también sirve — el plugin redirige `/movies/{slug}` → `/movies/{slug}/watch` internamente.
+
+### Reglas del sitio
+- CSRF no requerido para GET endpoints publicos.
+- El JSON `#content-data` tiene `trailer_url: "null"` (string) cuando no hay trailer; el plugin lo decodifica con `takeIf { it != "null" }`.
+- El campo `type` indica `serie`/`movie`.
+- Paginación API estable: `has_next` true/false + `next_page`; `per_page=30`.
+- Cada `figure` interna empieza con `<a href="/movies/slug-id">` o `/series/slug-id` — title id tambien esta en la seccion `data-title-id="N"` del card.
+
+### Estado
+- Estructura creada completa. Compilacion: pendiente por el usuario (`.\gradlew.bat :KimerawebProvider:make --console=plain -q`).
+- `plugins.json`: entrada `KimerawebProvider` v1 ("Kimera", `tvTypes:[Anime,TvSeries,Movie]`, `iconUrl: apple-touch-icon.png`, `fileSize: 0` pendiente de compilar).
+- **Pendiente**: compilar, instalar cs3 en dispositivo y probar:
+  1. `Películas` en home (`https://kimeraweb.com/movies/`, 64 cards);
+  2. `Series` (`/series/`, 64 cards) — anime/dramas/donghuas tambien;
+  3. búsqueda `"merlin"` → resultados;
+  4. detalle serie Merlin: 65 episodios;
+  5. detalle película Corazón de la Bestia;
+  6. reproducir ambos tipos; `Referer` se inyecta al CDN; si el CDN exige headers especiales en segmentos, ajustar interceptor ahi.
+- Archivos tocados: `KimerawebProvider/build.gradle.kts`, `KimerawebProvider/src/main/AndroidManifest.xml`, `KimerawebProvider/src/main/kotlin/com/example/KimerawebPlugin.kt`, `KimerawebProvider/src/main/kotlin/com/example/KimerawebProvider.kt`, `plugins.json`, `AGENTS.md`.
