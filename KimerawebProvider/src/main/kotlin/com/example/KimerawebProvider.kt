@@ -107,7 +107,7 @@ class KimerawebProvider : MainAPI() {
         if (!isInternal(hrefAttr)) return null
         val kind = hrefAttr.trimStart('/').substringBefore("/", "series").ifBlank { "series" }
         val image = a.selectFirst("img[data-src]") ?: return null
-        val poster = fixUrlNull(image.attr("data-src"))
+        val poster = androidImageUrl(image.attr("data-src"))
         val caption = el.selectFirst("figcaption")?.text()?.trim()
             ?: image.attr("alt")?.trim()
             ?: return null
@@ -137,6 +137,12 @@ class KimerawebProvider : MainAPI() {
         return items.takeIf { it.isNotEmpty() }
     }
 
+    private fun androidImageUrl(url: String?): String? {
+        val u = fixUrlNull(url) ?: return null
+        if (u.startsWith("https://kimeraweb.com/") || u.startsWith("//kimeraweb.com/")) return u
+        return if (u.contains("cloudcdn.sbs/media/images")) "https://wsrv.nl/?url=${URLEncoder.encode(u, "UTF-8")}&w=420&h=720&fit=cover&output=png&q=90" else u
+    }
+
     private fun fixUrlNull(href: String?): String? =
         href?.takeIf { it.startsWith("http") || it.startsWith("//") }
             ?: href?.takeIf { it.startsWith("/") }?.let { mainUrl + it }
@@ -153,8 +159,8 @@ class KimerawebProvider : MainAPI() {
         val isMovie = url.contains("/movies/")
         val id = Regex("""-(\d+)/?$""").find(url.removeSuffix("/"))?.groupValues?.get(1)?.toIntOrNull()
             ?: titleJson?.id ?: return null
-        val poster = fixUrlNull(doc.selectFirst("div[data-action='view-image'] img[data-src]")?.attr("data-src"))
-        val backdrop = fixUrlNull(doc.selectFirst("div.image-radial-gdr img[data-src]")?.attr("data-src"))
+        val poster = androidImageUrl(doc.selectFirst("div[data-action='view-image'] img[data-src]")?.attr("data-src"))
+        val backdrop = androidImageUrl(doc.selectFirst("div.image-radial-gdr img[data-src]")?.attr("data-src"))
         Log.d("Kimera", "load POSTER=$poster BACKDROP=$backdrop TITLE=$title")
         Log.d("Kimera", "load POSTER_EL=${doc.selectFirst("div[data-action='view-image'] img[data-src]")?.attr("outerHTML")?.take(200)}")
         val synopsis = doc.selectFirst("h2:containsOwn(Sinopsis)")?.nextElementSibling()?.selectFirst("p")?.text()?.trim()
@@ -182,7 +188,7 @@ class KimerawebProvider : MainAPI() {
                 for (ep in season.items.orEmpty()) {
                     val epNum = ep.number?.toInt() ?: continue
                     val epUrl = ep.url?.let { mainUrl + it } ?: continue
-                    val posterUrl = fixUrlNull(ep.thumbnail_url)
+                    val posterUrl = androidImageUrl(ep.thumbnail_url)
                     all.add(newEpisode(epUrl) {
                         this.name = ep.name ?: "Episodio $epNum"
                         this.season = seasonNum
@@ -304,11 +310,12 @@ class KimerawebProvider : MainAPI() {
                 return try {
                     val body = response.body ?: return response
                     val bytes = body.bytes()
-                    if (bytes.size < 22) { Log.w("Kimera", "[intercept] body too small len=${bytes.size}"); return response }
+                    if (bytes.size < 25) { Log.w("Kimera", "[intercept] body too small len=${bytes.size}"); return response }
                     val head = String(bytes, 0, 9, Charsets.UTF_8)
-                    if (head != "<!--IGCF1") { Log.w("Kimera", "[intercept] no prefix head=${bytes.take(16).joinToString(",") { "%02X".format(it) }}"); return response }
-                    val stripped = bytes.copyOfRange(22, bytes.size)
-                    Log.d("Kimera", "[intercept] strip ok len=${bytes.size}->${stripped.size} type=${request.url.query}")
+                    val tail = String(bytes, bytes.size - 3, 3, Charsets.UTF_8)
+                    if (head != "<!--IGCF1" || tail != "-->") { Log.w("Kimera", "[intercept] no prefix/tail match head=${bytes.take(16).joinToString(",") { "%02X".format(it) }} tail=${bytes.takeLast(6).joinToString(",") { "%02X".format(it) }}"); return response }
+                    val stripped = bytes.copyOfRange(22, bytes.size - 3)
+                    Log.d("Kimera", "[intercept] strip ok len=${bytes.size}->${stripped.size} path=${request.url.encodedPath}")
                     val contentType = "application/octet-stream".toMediaTypeOrNull()
                     response.newBuilder()
                         .removeHeader("Content-Length")

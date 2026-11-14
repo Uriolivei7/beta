@@ -3001,7 +3001,8 @@ ull -> titulo "En Vivo" y poster de placeholder.
 
 **Fix v6 (DoggitvProvider.kt)**:
 1. **Cache en disco** ilesDir/doggitv_channels.tsv (formato url<TAB>nombreEnc<TAB>logoEnc, enc/dec con URLEncoder): persistChannels() escribe (merge) al terminar getMainPage (lista del pais completa) y search (solo los 80 resultados); loadDiskCache() lo lee una vez por sesion al arranque de un load() fallido.
-2. **esolveChannel(url)** en load(): memoria -> cache disco -> **escaneo de respaldo** (scanAllLists(): baja las 22 listas en paralelo con countries.amap {} = ParCollectionsKt.amap, verificado que corre en paralelo) y persiste el resultado. Con esto los favoritos **creados antes del fix** tambien recuperan el nombre (tarda ~5-15 s la primera vez).
+2. **
+esolveChannel(url)** en load(): memoria -> cache disco -> **escaneo de respaldo** (scanAllLists(): baja las 22 listas en paralelo con countries.amap {} = ParCollectionsKt.amap, verificado que corre en paralelo) y persiste el resultado. Con esto los favoritos **creados antes del fix** tambien recuperan el nombre (tarda ~5-15 s la primera vez).
 3. DoggitvProvider.pluginContext (setado en DoggitvPlugin.load con pplicationContext) -> acceso a ilesDir.
 4. El logo tambien sale del cache -> el poster del detalle sigue siendo el real tras reiniciar.
 
@@ -3051,8 +3052,11 @@ El v2 remapeaba dsvplay.com -> doodstream.com (por analogia con otros providers)
 **Sintoma (usuario)**: en una serie con servidor MEGA, el **episodio 1 se reproducia bien**; al **cambiar a otro episodio** -> error, no reproducia y **el reproductor se cerraba** (sin enlace); y una vez cerrado, **volver a intentar el episodio 1 ya no reproducia** (quedaba roto de forma persistente).
 
 **Causa raiz (3 bugs en MegaExtractor.kt, todos de corrupcion/estado)**:
-1. **Escritura sin lock en el path principal**: en downloadChunkWithFreshUrl/downloadChunkFromShard el af.seek(sc.filePos) + af.write(dec) iban **fuera de synchronized(fileLock)** (solo el path UFA y el on-demand lo usaban). En Phase 4 los **hilos de shard escriben en el MISMO RandomAccessFile**: seek()+write() no son atomicos -> las escrituras se intercalan y el **MP4 queda corrupto** (ExoPlayer no lo parsea -> 2001). El ileLock era **por instancia de DiskStream**, asi que un resume no se sincronizaba con el downloader viejo.
-2. **af.setLength(start)** (truncado del archivo) en el camino de "chunk incompleto": **borra lo que escribieron otros hilos** en paralelo (el fix de v72 lo habia quitado solo del path cross-shard).
+1. **Escritura sin lock en el path principal**: en downloadChunkWithFreshUrl/downloadChunkFromShard el 
+af.seek(sc.filePos) + 
+af.write(dec) iban **fuera de synchronized(fileLock)** (solo el path UFA y el on-demand lo usaban). En Phase 4 los **hilos de shard escriben en el MISMO RandomAccessFile**: seek()+write() no son atomicos -> las escrituras se intercalan y el **MP4 queda corrupto** (ExoPlayer no lo parsea -> 2001). El ileLock era **por instancia de DiskStream**, asi que un resume no se sincronizaba con el downloader viejo.
+2. **
+af.setLength(start)** (truncado del archivo) en el camino de "chunk incompleto": **borra lo que escribieron otros hilos** en paralelo (el fix de v72 lo habia quitado solo del path cross-shard).
 3. **Sin validacion de integridad**: cleanup() meteia en cachedFiles cualquier archivo con downloadComplete && length >= fileSize -> un MP4 corrupto (por 1 y 2) queda **cacheado en disco para siempre** -> el episodio 1 "ya no reproducÃ­a" ni aunque se reinicie la app.
 
 **Fix v75 (MegaExtractor.kt)**:
@@ -3837,7 +3841,8 @@ Cascada de 3 fases (timeout total 60000ms):
 ### Archivos
 - TvguatemalaProvider/build.gradle.kts (v1, es, Live, status = 1)
 - TvguatemalaProvider/src/main/AndroidManifest.xml (package="com.example")
-- TvguatemalaProvider/src/main/kotlin/com/example/TvguatemalaPlugin.kt (pluginContext + egisterMainAPI)
+- TvguatemalaProvider/src/main/kotlin/com/example/TvguatemalaPlugin.kt (pluginContext + 
+egisterMainAPI)
 - TvguatemalaProvider/src/main/kotlin/com/example/TvguatemalaProvider.kt (provider completo)
 - plugins.json: entrada TvguatemalaEnvivo/TvguatemalaProvider v1, ileSize: 0 pendiente.
 
@@ -3858,7 +3863,8 @@ Cascada de 3 fases (timeout total 60000ms):
 ### Archivos
 - CxtvProvider/build.gradle.kts (v1, es, Live, status = 1)
 - CxtvProvider/src/main/AndroidManifest.xml (package="com.example")
-- CxtvProvider/src/main/kotlin/com/example/CxtvPlugin.kt (pluginContext + egisterMainAPI)
+- CxtvProvider/src/main/kotlin/com/example/CxtvPlugin.kt (pluginContext + 
+egisterMainAPI)
 - CxtvProvider/src/main/kotlin/com/example/CxtvProvider.kt (provider completo)
 - plugins.json: entrada CxtvEnvivo/CxtvProvider v1, ileSize: 0 pendiente.
 
@@ -4198,7 +4204,8 @@ Cascada de 3 fases (timeout total 60000ms):
 ## LacartoonsProvider â€” Cubeembed/TurboEmbed ahora es Turbovio SPA (08 Nov 2026 v27)
 - **Sintoma (usuario)**: El Chavo Del 8 T5 (cap 30028) -> iframe cubeembed.rpmvid.com -> redirige a 	urboembed.com/1ybb; el WebView log TurboEmbed WebView terminÃ³ sin fuente JW; el API legado da 404; emitted=0 -> "enlaces no encontrados".
 - **Causa raiz**: 	urboembed.com ya NO usa JWPlayer con ile en getPlaylistItem de entrada. Ahora es **Turbovio** (SPA Vite) con: clave AES derivada de Math.floor(Date.now()/864e5) (cambia cada dÃ­a), IV = salt fijo + origin, endpoints /api/stream?s=<enc>&pv=, tabla de strings ofuscada con rotaciÃ³n en runtime y anti-bot (webdriver/headless/okhttp). Replicar su cripto desde OkHttp es frÃ¡gil.
-- **Fix v27**: esolveTurboEmbed ahora **captura el .m3u8 por intercepciÃ³n de red** (WebViewClient.shouldInterceptRequest, devuelve null para no romper) + sondeo JS que mira ideo.currentSrc, performance.getEntriesByType('resource') (busca .m3u8) y jwplayer, y pulsa #player-button/.tvp-poster-play/.tvp-center-play. Timeout subido a 45s / 40 intentos. lastPageUrl = URL real de turboembed para el referer.
+- **Fix v27**: 
+esolveTurboEmbed ahora **captura el .m3u8 por intercepciÃ³n de red** (WebViewClient.shouldInterceptRequest, devuelve null para no romper) + sondeo JS que mira ideo.currentSrc, performance.getEntriesByType('resource') (busca .m3u8) y jwplayer, y pulsa #player-button/.tvp-poster-play/.tvp-center-play. Timeout subido a 45s / 40 intentos. lastPageUrl = URL real de turboembed para el referer.
 - Nota ads: Turbovio intercepta el primer click si hay ads pendientes (h>0); el poll insiste cada segundo hasta que pasan.
 - Versiones a **27** (uild.gradle.kts + plugins.json); ileSize pendiente.
 - Compilacion: pendiente por el usuario (.\gradlew.bat :LacartoonsProvider:make --console=plain -q). **No compilado por regla del repo.**
@@ -4209,7 +4216,8 @@ Cascada de 3 fases (timeout total 60000ms):
 - **v28**: en vez de depender del DOM/click/intercepciÃ³n, se **ejecuta JS en el contexto de la pagina** usando su propia cripto (window.simpleCrypto) para llamar /api/stream y descifrar la respuesta:
   - slug = ultimo segmento de la URL; sales candidatas = [origin, hostname, host, ""].
   - Por cada salt: s = simpleCrypto.encrypt(slug, salt) -> etch('/api/stream?s='+s+(&pv)) -> recorrer data buscando hls/	iktok/direct; si estan cifrados, simpleCrypto.decrypt(field, salt) + JSON.parse.
-  - Prefiere hls > 	iktok > direct. unApi() se lanza a 1.2s y 4.5s tras onPageFinished. Sigue habiendo poll() + shouldInterceptRequest(.m3u8) como red de seguridad.
+  - Prefiere hls > 	iktok > direct. 
+unApi() se lanza a 1.2s y 4.5s tras onPageFinished. Sigue habiendo poll() + shouldInterceptRequest(.m3u8) como red de seguridad.
   - NativeBridge.onErr loguea [TurboJS] ... para diagnosticar (no simpleCrypto / api XXX / no source in payload).
 - Versiones a **28** (uild.gradle.kts + plugins.json); ileSize pendiente.
 - Compilacion: pendiente por el usuario (.\gradlew.bat :LacartoonsProvider:make --console=plain -q). **No compilado por regla del repo.**
@@ -4387,3 +4395,24 @@ Sitio: `https://kimeraweb.com` (índice de series, animes, dramas, películas y 
   - **Fix**: `getVideoInterceptor()` — interceptor OkHttp que (1) matchea host `cloudcdn.sbs` + path `/media/stream/`, (2) lee el body entero, (3) si empieza por `<!--IGCF1`, descarta los primeros 22 bytes y (4) devuelve el body limpio con `Content-Type: application/octet-stream` (imitando un `.iso5` stream iso5-ish de Fragmented MP4). El master `/media/video/{id}` (con `application/vnd.apple.mpegurl`) pasa intacto.
 - **Pendiente**: compilar y probar HLS VOD dentro de Merlin T1E1 y mostrar los 5 seasons numerados 1..5.
 - Versión **2** (`build.gradle.kts` + `plugins.json`; `fileSize` sigue pendiente, sigue 0).
+
+## KimerawebProvider — Fix segmentos MP4: despojar tambien `-->` final (14 Nov 2026 v3)
+- **Síntoma v2 en dispositivo**: el interceptor ya strips `<!--IGCF1` (22 bytes del frente) y ExoPlayer llega a `FragmentedMp4Extractor.readAtomHeader`, pero falla con `EOFException` — el init MP4 tiene el final inválido/trunca.
+- **Causa raíz (verificada desde PC con ffprobe)**: cada parte del HLS lleva `<!--IGCF1 ... -->` envolviendo todo el MP4; al quitar sólo 22 bytes del frente quedan los 3 bytes `-->` iniciales en el inicio real; ExoPlayer lee el box real y después espera leer el siguiente pero EOF cierra el stream por los `-->` inesperado.
+- **Fix**: en `getVideoInterceptor` también se quitan los 3 bytes `-->` finales:
+  - `<!--IGCF1` (9 bytes) + 13 bytes hasta el box real (inicio real en 22) — como antes.
+  - `-->` (3 bytes) del final — añadido.
+- **Validado con ffprobe**: `init + seg0 + seg1 + seg2 + seg3` (100-2 MB) → `format_name=mov,mp4,m4a,3gp,3g2,mj2  duration=12.744042` → flujo reproducible correctamente.
+- `plugins.json`: KimerawebProvider v3 (`fileSize` pendiente sigue 0).
+
+## KimerawebProvider — Póster no visible en detalle (14 Nov 2026 v4)
+- **Síntoma**: póster no aparece en la página de detalle/Load SDK (pero sí en búsqueda/main page — mismo CDN .webp VP8X).
+- **Diagnóstico**: URL de póster 999x1499 WebP VP8X (~121 KB), 200 OK desde PC y desde Android-agent; navegador del móvil también la abre bien. Imagen decodificable OK.
+- **Hipótesis**: Android Glide/Coil con VP8X del CDN parece no decodificar, o el `.webp` no se renderiza con ciertas cabecera del LoadSDK (maybe el ImageLoader del app usa BitmapFactory con decodeStream inoptimizado y no tolera este VP8X concreto del CDN).
+- **Fix v4**: nuevo `androidImageUrl()` aplicado a TODAS las URLs de imagen que asignamos con `this.posterUrl`/`this.backgroundPosterUrl`/`episodePoster`:
+  - Si el host es `cloudcdn.sbs`, reescribe a `https://wsrv.nl/?url=<enc>&w=600&h=900&fit=inside&output=png&q=90` — wsrv.nl sirve PNG re-encodeado (probado 200 OK en PC, `image/png`); Android decodifica PNG garantizado.
+  - Resto de hosts: devuelve la URL sin cambios.
+- Se aplica en: `figureCard`, `load()` (póster y backdrop), `load()` episodios (`posterUrl`).
+- Versión **4** (`build.gradle.kts` + `plugins.json`; `fileSize` sigue pendiente).
+- ⏸️ **Pendiente**: compilar e instalar v4 y confirmar que el detalle ya NO muestra póster en blanco (el screenshot del usuario anterior mostraba que el fondo sí aparece pero la portada no).
+
