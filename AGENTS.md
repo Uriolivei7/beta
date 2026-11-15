@@ -4416,3 +4416,16 @@ Sitio: `https://kimeraweb.com` (índice de series, animes, dramas, películas y 
 - Versión **4** (`build.gradle.kts` + `plugins.json`; `fileSize` sigue pendiente).
 - ⏸️ **Pendiente**: compilar e instalar v4 y confirmar que el detalle ya NO muestra póster en blanco (el screenshot del usuario anterior mostraba que el fondo sí aparece pero la portada no).
 
+
+## MhdflixProvider — Diagnóstico links Merlin + extractor Uqload (15 Nov 2026 v22)
+- **Log del usuario (EP S1E11 id=33943)**: video_servidores: 4 links (uqload.is/dood.ws/netu.ac/vudeo.co). Todos los extractores nativos de CS3 devolvieron 0 links → `processApiLinks - found=false`.
+- El usuario confirmó que la web **sí** reproduce Merlin desde uqload.is (XUpload).
+- **Causa raíz**: CS3 no tiene extractor para `uqload.is`/`.io`/`.cx`/`.to` (sólo `.com`, `.co`, `.bz`, `.cx`, `.xyz`). MhdflixProvider's `fixEmbedUrl()` tampoco mapeaba estos mirrors → ningún extractor matcheaba → 0 links.
+- **Verificado** (PC): el `<script>` packed (Dean Edwards) del embed XUpload contiene la config de JW Player. Ejecutado con Node sobre `uw_src.html` → `sources` trae `https://strm5.uqload.vc/hls2/03/02149/u3yupdujc23l_n/master.m3u8?t=...` (extracción idéntica al patrón XUpload clásico).
+- **Fix (portado de FlixlatamProvider)**: extractor propio `MhdflixUqload` en `Extractors.kt` que hace GET embed (Firefox UA, browser headers) → `getAndUnpack()` → regex `m3u8|mp4` → emite con `Origin`/`Referer` del mirror y cookies de sesión. Subclases: `MhdflixUqloadIo` (`uqload.io`), `MhdflixUqloadcx` (`.cx`), `MhdflixUqloadto` (`.to`), todas con `mainUrl = "https://uqload.is/io/cx/to"` para que CS3 `loadExtractor` las encuentre (matcheo por prefijo de host).
+- **Plugin**: 4 nuevas `registerExtractorAPI` en `MhdflixPlugin.kt`.
+- Versiones a **22** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente en ambos).
+- **Archivos**: `Extractors.kt`, `MhdflixPlugin.kt`, `build.gradle.kts`, `plugins.json`, `AGENTS.md`.
+- Compilación pendiente por el usuario: ` .\gradlew.bat :MhdflixProvider:make --console=plain -q`.
+- **Pendiente en dispositivo**: abrir Merlin S1E11 — debe salir al menos `MhdflixUqload [Latino]` con el master `strm5.uqload.vc/...`. Si no aparece, buscar en logcat `MhdflixUqload` y compartir líneas: `[Uqload] URL=... ; [Uqload] unpacked=true ; [Uqload] m3u8=N mp4=M`.
+- **Vudeo** y **Netu** siguen sin extractor (no existen clases CS3 para ellos); el enlace emitido depende de la tolerancia que tenga el reproductor con esos hosts. Si los pide explícitamente, habría que soportarlos de forma similar a Uqload.
