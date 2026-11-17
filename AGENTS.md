@@ -4429,3 +4429,30 @@ Sitio: `https://kimeraweb.com` (índice de series, animes, dramas, películas y 
 - Compilación pendiente por el usuario: ` .\gradlew.bat :MhdflixProvider:make --console=plain -q`.
 - **Pendiente en dispositivo**: abrir Merlin S1E11 — debe salir al menos `MhdflixUqload [Latino]` con el master `strm5.uqload.vc/...`. Si no aparece, buscar en logcat `MhdflixUqload` y compartir líneas: `[Uqload] URL=... ; [Uqload] unpacked=true ; [Uqload] m3u8=N mp4=M`.
 - **Vudeo** y **Netu** siguen sin extractor (no existen clases CS3 para ellos); el enlace emitido depende de la tolerancia que tenga el reproductor con esos hosts. Si los pide explícitamente, habría que soportarlos de forma similar a Uqload.
+
+## TeleonlineProvider — Search: `/?s=` no filtra → REST API + local fallback (15 Nov 2026 v15)
+- **Síntoma (usuario)**: "en el Teleonline el search no me funciona e vez de me salgan los resultados de lo que estoy buscando me sale todos los canales".
+- **Causa raíz (verificada en PC)**: el plugin usaba `safeGet("https://teleonline.org/?s={q}")` y `/?s=` del theme **asap** devuelve el homepage con todos los canales (sin filtrar, len≈378 KB, `h1=La televisión del mundo en una sola plataforma`). El "search" del plugin no filtraba nada.
+- **Verificado que REST API sí funciona**:
+  - `https://teleonline.org/wp-json/wp/v2/search?search=universal&subtype=post` → 2187 B con {Studio Universal Africa/Latin America, Calle 13 Universal, Silk Universal...}.
+  - `https://teleonline.org/wp-json/wp/v2/posts?search=universal&per_page=10&_fields=id,link,title,featured_media&_embed=wp:featuredmedia` → 200, rápido (<3 s), pero `_embedded.wp:featuredmedia = []` (posters no embebidos en este endpoint).
+- **Fix v15**:
+  - `search()` reescrito: (1) intenta `/wp-json/wp/v2/posts?search=…&_fields=id,link,title,featured_media` (timeout 25 s); parsea title/rendered + link HTML-escapeado; poster se toma de **caché de secciones** (`posterForUrl(link)` recorre `sectionCache`). (2) Si REST devuelve 0 o falla, fallback a **filtro local fuzzy** sobre las secciones ya cacheadas (URL + `netfold` de acentos), idéntico al comportamiento de `getMainPage`. (3) Devuelve `List<SearchResponse>`, nunca un dump de 800 canales.
+  - `sectionCache` añadida para reusar `fetchSection` en el fallback local (getMainPage también la usa) — economies of cataloguing en red.
+  - Imports añadidos: `org.json.JSONArray/JSONObject`, `kotlinx.coroutines.async/coroutineScope`.
+  - `cleanHtml()` + `fold()` (acentos) + `posterForUrl()` helpers.
+- **Versiones**: `build.gradle.kts` 14 → **15**; `plugins.json` Teleonline 11 → **15** (desync; el anterior declarativo quedaba "version=11 (estable)" pero el código ya iba en 14). `fileSize` pendiente.
+- Compilación pendiente por el usuario: ` .\gradlew.bat :TeleonlineProvider:make --console=plain -q`.
+- **Pendiente en dispositivo**: abrir search en Teleonline y escribir p.ej. "universal" — debe mostrar sólo los canales relevantes (Studio Universal, Silk, Calle 13...). Si vuelve a mostrar todo, buscar `Teleonline` en logcat para ver `rest search '$q' -> N` (N = resultados reales) o `local filter '$q' -> N`.
+
+## OkruProvider â€” persistencia de pÃ³ster en favoritos (15 Nov 2026 v8)
+- **SÃ­ntoma**: guardar un video OK.ru en favoritos funciona y el pÃ³ster aparece. Pero al dÃ­a siguiente el pÃ³ster ya no sale; hay que ir a favoritos, entrar al video, y volver a agregar ese video para que el pÃ³ster aparezca otra vez.
+- **Causa raÃ­z**: `posterCache = ConcurrentHashMap()` vive solo en memoria. Al reiniciar la app se vacÃ­a. En `Filmvideo()` (`load()`), si `og:image` estÃ¡ vacÃ­a o es el placeholder genÃ©rico de OK (`/res/i/anonym/def_1200x630-r.png`), se desactiva el fallback a `posterCache`â†’ `poster = null` â†’ LoadResponse con `posterUrl=null` â†’ los favoritos muestran placeholder o quedan sin imagen.
+- **Fix v8**: `companion object` persiste los pÃ³steres en la SharedPreferences del app (`AcraApplication.getKey/setKey`, mismo mecanismo que usa SyncPlugin) bajo la clave `okru_poster_cache`. Estructura: `Map<videoId, url>` serializado a JSON. Llamado desde:
+  - `search()` â†’ `persistPoster(id, fixUrl(it))` cada vez que se recibe un `iv.okcdn.ru` thumbnail legÃ­timo.
+  - `Filmvideo()` â†’ nuevo helper `persistedPoster(videoId)` = `posterCache[id] ?: getKey(POSTER_DISK_KEY)?.get(id)` â€” sobrevive reinicios.
+- Plugins en evidencia: `AcraApplication.getKey/setKey` acceden a `DataStore.getSharedPrefs(context)` interna del host (lecturas/escrituras de CR int32 necesarias); utilidad vÃ¡lida para maps stringâ†’string.
+- **Versiones**: `build.gradle.kts` 7â†’**8** (estaba en 7); `plugins.json` OkruProvider 7â†’**8**. `fileSize` sigue 32000 (actualizar tras compilar).
+- **Archivos**: `OkruProvider/src/main/kotlin/com/example/OkruProvider.kt`, `build.gradle.kts`, `plugins.json`, `AGENTS.md`.
+- CompilaciÃ³n pendiente por el usuario: `.\gradlew.bat :OkruProvider:make --console=plain -q`.
+- **Pendiente en dispositivo**: guardar un video en favoritos, reiniciar la app, abrir favoritos â€” el pÃ³ster debe aparecer sin tocar nada. Verificar tambiÃ©n que el pÃ³ster todavÃ­a aparece tras varios dÃ­as.

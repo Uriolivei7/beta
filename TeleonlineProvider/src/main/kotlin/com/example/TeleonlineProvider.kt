@@ -1,4 +1,4 @@
-package com.example
+﻿package com.example
 
 import android.util.Base64
 import android.util.Log
@@ -6,10 +6,14 @@ import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.utils.*
 import org.jsoup.Jsoup
+import org.json.JSONArray
+import org.json.JSONObject
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 
 class TeleonlineProvider : MainAPI() {
     override var mainUrl = "https://teleonline.org"
@@ -26,15 +30,15 @@ class TeleonlineProvider : MainAPI() {
     private data class OptionCandidate(val idx: Int, val url: String, val variant: String)
     private data class ProxyPlan(val master: String, val variantUrl: String, val tracks: List<TsTrackInfo>)
     private val countrySections = listOf(
-        "Perú" to "/canales/peru/",
+        "PerÃº" to "/canales/peru/",
         "Argentina" to "/canales/argentina/",
-        "México" to "/canales/mexico/",
+        "MÃ©xico" to "/canales/mexico/",
         "Colombia" to "/canales/colombia/",
         "Chile" to "/canales/chile/",
         "Estados Unidos" to "/canales/estados-unidos/",
         "Brasil" to "/canales/brasil/",
         "Venezuela" to "/canales/venezuela/",
-        "España" to "/canales/espana/",
+        "EspaÃ±a" to "/canales/espana/",
     )
 
     private fun extractPosterFromStyle(element: org.jsoup.nodes.Element): String? {
@@ -70,13 +74,17 @@ class TeleonlineProvider : MainAPI() {
         return channels
     }
 
+    private val sectionCache = java.util.concurrent.ConcurrentHashMap<String, List<ChannelInfo>>()
+
     private suspend fun fetchSection(name: String, path: String, pages: Int = 1): List<ChannelInfo> {
+        sectionCache[path]?.let { return it }
         val channels = mutableListOf<ChannelInfo>()
         for (p in 1..pages) {
             val url = if (p == 1) "$mainUrl$path" else "$mainUrl${path}page/$p/"
             val html = safeGet(url) ?: continue
             channels.addAll(extractChannels(html))
         }
+        sectionCache[path] = channels
         return channels
     }
 
@@ -116,8 +124,79 @@ class TeleonlineProvider : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val html = safeGet("$mainUrl/?s=$query") ?: return emptyList()
-        return extractChannels(html).distinctBy { it.url }.map { it.toSearchResponse() }
+        val q = query.trim()
+        if (q.isBlank()) return emptyList()
+        val enc = java.net.URLEncoder.encode(q, "UTF-8")
+        val out = ArrayList<SearchResponse>()
+        val seen = HashSet<String>()
+
+        try {
+            val url = "$mainUrl/wp-json/wp/v2/posts?search=$enc&per_page=20&_fields=id,link,title,featured_media"
+            val res = app.get(url, headers = mapOf("User-Agent" to playerUa, "Accept" to "application/json"), timeout = 25L)
+            if (res.isSuccessful) {
+                val arr = JSONArray(res.text)
+                for (i in 0 until arr.length()) {
+                    val o = arr.optJSONObject(i) ?: continue
+                    val link = o.optString("link").trim()
+                    val title = cleanHtml((o.optJSONObject("title")?.optString("rendered"))?.takeIf { it.isNotBlank() } ?: o.optString("title"))
+                    if (title.isBlank() || link.isBlank()) continue
+                    if (!seen.add(link)) continue
+                    val poster = posterForUrl(link)
+                    out.add(newLiveSearchResponse(title, link, TvType.Live) { this.posterUrl = poster })
+                }
+                Log.d("Teleonline", "rest search '$q' -> ${out.size}")
+            } else {
+                Log.w("Teleonline", "rest search HTTP ${res.code}")
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e("Teleonline", "rest search fallo: ${e.message}")
+        }
+
+        if (out.isEmpty()) {
+            val qn = fold(q)
+            val sections = fetchAllSections()
+            loop@ for ((_, channels) in sections) {
+                for (ch in channels) {
+                    if (ch.url.isBlank()) continue
+                    if (!fold(ch.name).contains(qn)) continue
+                    if (!seen.add(ch.url)) continue
+                    out.add(ch.toSearchResponse())
+                    if (out.size >= 40) break@loop
+                }
+            }
+            Log.d("Teleonline", "local filter '$q' -> ${out.size}")
+        }
+        return out
+    }
+
+    private fun fold(s: String): String =
+        java.text.Normalizer.normalize(s.lowercase(), java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{Mn}+"), "")
+
+    private fun cleanHtml(s: String): String {
+        if (s.isBlank()) return ""
+        return s.replace(Regex("<[^>]*>"), "")
+            .replace("&#8211;", "-").replace("&#8212;", "-")
+            .replace("&amp;", "&").replace("&quot;", "\"")
+            .replace("&#039;", "'").replace("&nbsp;", " ")
+            .trim()
+    }
+
+    private fun posterForUrl(url: String): String? {
+        for (list in sectionCache.values) {
+            for (ch in list) {
+                if (ch.url == url) return ch.poster
+            }
+        }
+        return null
+    }
+
+    private suspend fun fetchAllSections(): List<Pair<String, List<ChannelInfo>>> = coroutineScope {
+        val jobs = listOf("Canales" to async { fetchSection("Canales", "/", maxPagesGeneral) }) +
+            countrySections.map { (name, path) -> name to async { fetchSection(name, path) } }
+        jobs.map { (n, d) -> n to d.await() }
     }
 
     override suspend fun load(url: String): LoadResponse? {
@@ -226,7 +305,7 @@ class TeleonlineProvider : MainAPI() {
 
                     val m3u8Url = extractM3u8FromHtml(playerHtml)
                     if (m3u8Url != null) {
-                        callback(newExtractorLink(name, "$name - Opción ${idx + 1}", m3u8Url, ExtractorLinkType.M3U8) {
+                        callback(newExtractorLink(name, "$name - OpciÃ³n ${idx + 1}", m3u8Url, ExtractorLinkType.M3U8) {
                             this.headers = mapOf(
                                 "User-Agent" to "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                                 "Referer" to playerUrl
@@ -265,7 +344,7 @@ class TeleonlineProvider : MainAPI() {
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    Log.e("Teleonline", "probe opción ${c.idx} falló: ${e.message}")
+                    Log.e("Teleonline", "probe opciÃ³n ${c.idx} fallÃ³: ${e.message}")
                 }
             }
         }
@@ -280,7 +359,7 @@ class TeleonlineProvider : MainAPI() {
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
-                        Log.e("Teleonline", "probe opción ${c.idx} falló (reintento): ${e.message}")
+                        Log.e("Teleonline", "probe opciÃ³n ${c.idx} fallÃ³ (reintento): ${e.message}")
                     }
                 }
             }
@@ -289,8 +368,8 @@ class TeleonlineProvider : MainAPI() {
 
         var found = false
         for ((idx, url) in options) {
-            val label = "En Vivo - Opción $idx"
-            Log.d("Teleonline", "opción $idx: $url")
+            val label = "En Vivo - OpciÃ³n $idx"
+            Log.d("Teleonline", "opciÃ³n $idx: $url")
             val plan = plans[idx]
             var proxied = false
             if (plan != null) {
@@ -332,7 +411,7 @@ class TeleonlineProvider : MainAPI() {
     private suspend fun probeCandidate(c: OptionCandidate): ProxyPlan? = withContext(Dispatchers.IO) {
         val segment = TeleonlineTsProxy.firstSegment(c.variant, 15000L) ?: return@withContext null
         val tracks = TeleonlineTsProxy.probeTracks(segment) ?: return@withContext null
-        Log.d("Teleonline", "opción ${c.idx} probe ok: ${tracks.joinToString { "${it.pid}:${it.lang}" }}")
+        Log.d("Teleonline", "opciÃ³n ${c.idx} probe ok: ${tracks.joinToString { "${it.pid}:${it.lang}" }}")
         ProxyPlan(c.url, c.variant, tracks)
     }
 
