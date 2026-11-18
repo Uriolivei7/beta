@@ -4478,3 +4478,34 @@ Sitio: `https://kimeraweb.com` (índice de series, animes, dramas, películas y 
 - Search "universal" debe mostrar Canal correctos: `Studio Universal Africa/Latin America/Calle 13 Universal/Silk Universal...` con póster.
 - Las etiquetas como "En Vivo - Opción 3" deben salir con acentos correctos ("Opción").
 
+
+## TeleonlineProvider — Resiliencia a sitio caído + cache disco (17 Nov 2026 v17)
+- **Diagnóstico (usuario, 17 Nov, 21:15)**: el plugin cargaba OK pero `search` no encontraba nada (`rest search fallo: timeout`, `local filter 'comedy central' -> 0`) y cualquier home/channel también sufría timeouts múltiples.
+- **Teleonline.org DOWN verificado desde PC** (mismo periodo): `wp-json/wp/v2/search?search=comedy+central` → **read timeout** tras 30 s. `safeGet` del plugin también timeoutea (intento 1 con 15 s, intento 2 con 30 s).
+- **Problemas del código**:
+  1. REST timeout 25 L — cuando el sitio está caído, el search bloquea 25 s en obtener datos antes de fallback.
+  2. `fetchAllSections()` para fallback local también tirar a red (todos los `safeGet` timeoutean) cuandoSectionCache está vacía (caso app recién abierta).
+  3. No había snapshot persistente — entre app restarts y desconexiones, no se podía buscar sin red.
+
+### Fix v17
+1. **Timeout REST reducido a 12 L** — el fallback local arranca mucho antes.
+2. **Persistencia de secciones en disco** vía `CloudStreamApp.getKey/setKey` (misma pattern que OkruProvider posts):
+   - Companion `TeleonlineProvider` con `SECTION_DISK_KEY = "teleonline_section_cache_v16"`.
+   - `hydrateSectionDisk()` (lazy, idempotente) lee del almacén -> `sectionDiskSnapshot: Map<path, List<ChannelInfo>>`.
+   - `persistSectionDisk()` al final de `fetchSection()` cuando obtuvo datos (write-all —SectionCache ya tiene las entradas).
+   - `snapshotSection(path)` usado como shortcut: si hay snapshot persistido, `fetchSection` devuelve sin tocar red.
+3. **ChannelInfo** `private` → `internal` para que Jackson (`AppUtils.parseJson/toJson`) pueda serializar/deserializar la lista.
+4. Imports nuevos: `AppUtils.parseJson`, `AppUtils.toJson` (Jackson), `com.lagradost.cloudstream3.amap`.
+
+### Importante
+- Si el sitio está completamente caído, **el primer search** no muestra resultados (sección vacía por haber acabado de iniciar la app).
+- Después de un `getMainPage` exitoso (cualquiera sea el dato), **las siguientes búsquedas funcionan sin red** (offline).
+- Una vez que el sitio vuelva, `fetchSection` vuelve a obtener datos frescos (cache in-memory se rellena) y persiste el snapshot.
+- **Versiones**: `build.gradle.kts` 16 → **17**; `plugins.json` Teleonline 16 → **17** (`fileSize` pendiente).
+
+### Compilar / probar
+```
+.\gradlew.bat :TeleonlineProvider:make --console=plain -q
+```
+- Primer arranque: abrir Home — las secciones cargan y se persisten (probar offline reiniciando la app y buscar algo).
+- Si el sitio sigue caído, otras secciones/búsquedas no funcionan — no es problema del plugin.

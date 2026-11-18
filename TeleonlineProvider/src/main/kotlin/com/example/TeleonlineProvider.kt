@@ -5,6 +5,8 @@ import android.util.Log
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.network.CloudflareKiller
 import com.lagradost.cloudstream3.utils.*
+import com.lagradost.cloudstream3.utils.AppUtils.parseJson
+import com.lagradost.cloudstream3.utils.AppUtils.toJson
 import org.jsoup.Jsoup
 import org.json.JSONArray
 import org.json.JSONObject
@@ -48,7 +50,7 @@ class TeleonlineProvider : MainAPI() {
         return Regex("""url\s*\(?\s*['"]?\s*([^'")\s]+)""", RegexOption.IGNORE_CASE).find(style)?.groupValues?.get(1)
     }
 
-    private data class ChannelInfo(val name: String, val url: String, val poster: String?)
+    internal data class ChannelInfo(val name: String, val url: String, val poster: String?)
 
     private fun extractChannels(html: String): List<ChannelInfo> {
         val channels = mutableListOf<ChannelInfo>()
@@ -75,9 +77,53 @@ class TeleonlineProvider : MainAPI() {
         return channels
     }
 
+    companion object {
+        private const val SECTION_DISK_KEY = "teleonline_section_cache_v16"
+        @Volatile private var sectionDiskHydrated = false
+        private val sectionDiskSnapshot: MutableMap<String, List<ChannelInfo>> = mutableMapOf()
+
+        private fun hydrateSectionDisk() {
+            if (sectionDiskHydrated) return
+            synchronized(sectionDiskSnapshot) {
+                if (sectionDiskHydrated) return
+                try {
+                    val cur = com.lagradost.cloudstream3.CloudStreamApp.Companion.getKey<Map<String, String>>(SECTION_DISK_KEY)
+                    if (cur != null) {
+                        for ((path, json) in cur) {
+                            sectionDiskSnapshot[path] = AppUtils.parseJson<List<ChannelInfo>>(json)
+                        }
+                        Log.d("Teleonline", "section disk hydrated: ${sectionDiskSnapshot.size} secciones")
+                    }
+                } catch (e: Exception) {
+                    Log.w("Teleonline", "hydrateSectionDisk fallo: ${e.message}")
+                }
+                sectionDiskHydrated = true
+            }
+        }
+
+        private fun persistSectionDisk() {
+            try {
+                val serialized = sectionDiskSnapshot
+                    .filter { it.value.isNotEmpty() }
+                    .mapValues { it.value.toJson() }
+                if (serialized.isNotEmpty()) {
+                    com.lagradost.cloudstream3.CloudStreamApp.Companion.setKey(SECTION_DISK_KEY, serialized)
+                }
+            } catch (e: Exception) {
+                Log.w("Teleonline", "persistSectionDisk fallo: ${e.message}")
+            }
+        }
+
+        private fun snapshotSection(path: String): List<ChannelInfo>? {
+            hydrateSectionDisk()
+            return sectionDiskSnapshot[path]
+        }
+    }
+
     private val sectionCache = java.util.concurrent.ConcurrentHashMap<String, List<ChannelInfo>>()
 
     private suspend fun fetchSection(name: String, path: String, pages: Int = 1): List<ChannelInfo> {
+        snapshotSection(path)?.let { if (it.isNotEmpty()) return it }
         sectionCache[path]?.let { return it }
         val channels = mutableListOf<ChannelInfo>()
         for (p in 1..pages) {
@@ -85,7 +131,11 @@ class TeleonlineProvider : MainAPI() {
             val html = safeGet(url) ?: continue
             channels.addAll(extractChannels(html))
         }
-        sectionCache[path] = channels
+        if (channels.isNotEmpty()) {
+            sectionCache[path] = channels
+            sectionDiskSnapshot[path] = channels
+            persistSectionDisk()
+        }
         return channels
     }
 
@@ -131,9 +181,29 @@ class TeleonlineProvider : MainAPI() {
         val out = ArrayList<SearchResponse>()
         val seen = HashSet<String>()
 
+        // 1) Local fuzzy first (disk cache hydrated → instant, even offline)
+        val qn = fold(q)
+        val sections0 = fetchAllSections()
+        if (sections0.any { it.second.isNotEmpty() }) {
+            loop@ for ((_, channels) in sections0) {
+                for (ch in channels) {
+                    if (ch.url.isBlank()) continue
+                    if (!fold(ch.name).contains(qn)) continue
+                    if (!seen.add(ch.url)) continue
+                    out.add(ch.toSearchResponse())
+                    if (out.size >= 40) break@loop
+                }
+            }
+            if (out.isNotEmpty()) {
+                Log.d("Teleonline", "local filter '$q' -> ${out.size}")
+                return out
+            }
+        }
+
+        // 2) REST API if local has nothing
         try {
             val url = "$mainUrl/wp-json/wp/v2/posts?search=$enc&per_page=20&_fields=id,link,title,featured_media"
-            val res = app.get(url, headers = mapOf("User-Agent" to playerUa, "Accept" to "application/json"), timeout = 25L)
+            val res = app.get(url, headers = mapOf("User-Agent" to playerUa, "Accept" to "application/json"), timeout = 12L)
             if (res.isSuccessful) {
                 val arr = JSONArray(res.text)
                 val posts = ArrayList<JSONObject>()
@@ -164,20 +234,7 @@ class TeleonlineProvider : MainAPI() {
             Log.e("Teleonline", "rest search fallo: ${e.message}")
         }
 
-        if (out.isEmpty()) {
-            val qn = fold(q)
-            val sections = fetchAllSections()
-            loop@ for ((_, channels) in sections) {
-                for (ch in channels) {
-                    if (ch.url.isBlank()) continue
-                    if (!fold(ch.name).contains(qn)) continue
-                    if (!seen.add(ch.url)) continue
-                    out.add(ch.toSearchResponse())
-                    if (out.size >= 40) break@loop
-                }
-            }
-            Log.d("Teleonline", "local filter '$q' -> ${out.size}")
-        }
+
         return out
     }
 
