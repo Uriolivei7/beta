@@ -207,20 +207,32 @@ class TeleonlineProvider : MainAPI() {
             if (res.isSuccessful) {
                 val arr = JSONArray(res.text)
                 val posts = ArrayList<JSONObject>()
-                val mediaIds = ArrayList<Long>()
+                val allMids = HashSet<Long>()
                 for (i in 0 until arr.length()) {
                     val o = arr.optJSONObject(i) ?: continue
                     posts.add(o)
                     val mid = o.optLong("featured_media", 0L)
-                    if (mid > 0) mediaIds.add(mid)
+                    if (mid > 0) allMids.add(mid)
                 }
-                val posters = fetchPosters(mediaIds.distinct())
+                // 1) posters from local section cache (no network)
+                val local = HashMap<Long, String>()
+                for (o in posts) {
+                    val link = o.optString("link").trim()
+                    val mid = o.optLong("featured_media", 0L)
+                    val lp = posterForUrl(link)
+                    if (!lp.isNullOrBlank() && mid > 0) local[mid] = lp
+                }
+                // 2) only fetch posters for missing mids, short timeout
+                val missing = allMids.filterNot { local.containsKey(it) }
+                val remote = if (missing.isNotEmpty()) fetchPosters(missing) else emptyMap<Long, String>()
                 for (o in posts) {
                     val link = o.optString("link").trim()
                     val title = cleanHtml((o.optJSONObject("title")?.optString("rendered"))?.takeIf { it.isNotBlank() } ?: o.optString("title"))
                     if (title.isBlank() || link.isBlank()) continue
                     if (!seen.add(link)) continue
-                    val poster = posters[o.optLong("featured_media", 0L)]?.takeIf { it.isNotBlank() }
+                    val mid = o.optLong("featured_media", 0L)
+                    val poster = local[mid]
+                        ?: remote[mid]?.takeIf { it.isNotBlank() }
                         ?: posterForUrl(link)
                     out.add(newLiveSearchResponse(title, link, TvType.Live) { this.posterUrl = poster })
                 }
@@ -264,7 +276,7 @@ class TeleonlineProvider : MainAPI() {
         if (mediaIds.isEmpty()) return emptyMap()
         return mediaIds.amap { id ->
             id to try {
-                val r = app.get("$mainUrl/wp-json/wp/v2/media/$id?_fields=source_url", headers = mapOf("User-Agent" to playerUa, "Accept" to "application/json"), timeout = 15L)
+                val r = app.get("$mainUrl/wp-json/wp/v2/media/$id?_fields=source_url", headers = mapOf("User-Agent" to playerUa, "Accept" to "application/json"), timeout = 6L)
                 if (r.isSuccessful) {
                     JSONObject(r.text).optString("source_url", "")
                 } else {

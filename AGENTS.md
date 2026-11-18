@@ -4520,3 +4520,15 @@ Sitio: `https://kimeraweb.com` (índice de series, animes, dramas, películas y 
 - `GET /` -> 200 (0.8 s)
 - `GET /canales/espana/` -> 200 (1.6 s)
 - `wp/v2/posts?search=universal` -> read timeout (25 s) — la REST API sigue saturada; el fallback local es lo que sirve entonces.
+
+## TeleonlineProvider — v20: posters missing workaround (17 Nov 2026 v20)
+- **Síntoma (usuario, 17 Nov, 22:45)**: Home carga parcialmente (sección "Perú" etc. desde disk hydrated funciona). Search "comedy central" devolvía 14 items pero media timeout posts fallan
+  - `media 67356 fallo: timeout` / `media 78804 fallo: timeout` / `media 67357 fallo: timeout` (posters no salen)
+  - `fetch poster timeout` (15 L)
+  - `rest search fallo: timeout` aún dos veces
+- **Diagnóstico**: `wp-json/wp/v2/media/{id}?_fields=source_url` desde el telefono timeoutea (15 L). REST search timeout está en 12 L → 22:46:47-22:47:00 tarda ~50 s.
+- **Fix v20**:
+  - `search()`: ahora prefiere `posterForUrl(link)` desde sectionCache hydrated (instantáneo, offline-capable). Sólo si el poster no está en caché se llama a `wp/v2/media/{id}`.
+  - `fetchPosters()`: timeout 15 L → **6 L** para que no se distiendan tiempo.
+  - Una sola llamada serial por sección en lugar de amap por n ids (secuencial pero tolerante a timeout).
+- **Versiones**: `build.gradle.kts` 19 → **20**; `plugins.json` Teleonline 19 → **20** (`fileSize` pendiente).
