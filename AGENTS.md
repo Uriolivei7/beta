@@ -4456,3 +4456,25 @@ Sitio: `https://kimeraweb.com` (índice de series, animes, dramas, películas y 
 - **Archivos**: `OkruProvider/src/main/kotlin/com/example/OkruProvider.kt`, `build.gradle.kts`, `plugins.json`, `AGENTS.md`.
 - CompilaciÃ³n pendiente por el usuario: `.\gradlew.bat :OkruProvider:make --console=plain -q`.
 - **Pendiente en dispositivo**: guardar un video en favoritos, reiniciar la app, abrir favoritos â€” el pÃ³ster debe aparecer sin tocar nada. Verificar tambiÃ©n que el pÃ³ster todavÃ­a aparece tras varios dÃ­as.
+
+## TeleonlineProvider — Search completo + fix mojibake (17 Nov 2026 v16)
+- **Síntoma (usuario, 15 Nov)**: en search aparece "todos los canales" (sin filtrar).
+- **Síntoma (17 Nov)**: búsqueda devuelve resultados pero los posters no salen; "opcion" se muestra con letras raras (mojibake).
+
+### Causa raíz (verificada en PC)
+1. `/?s=query` del theme asap **no filtra**: ignora el parámetro y devuelve la portada completa. Se confirmó: `https://teleonline.org/?s=universal` → HTML del home (378 KB con 30 canales).
+2. `_embed=wp:featuredmedia` en el endpoint de posts **devuelve `_embedded.wp:featuredmedia = []`** (sin posters).
+3. El fuente tenía **doble-encoded UTF-8** para los acentos: `Opci\xc3\x83\xc2\xb3n` (U+00C3 U+00B3 = "Ã³" como bytes Latin-1 re-codificados en UTF-8) en vez de `Opci\xc3\xb3n`. Causaba que textos como "Opción", "Perú", "España" se imprimieran como "OpciÃ³n", "Per\x83\xba", "Esp\x83\xa9a".
+
+### Fix v16
+1. **Encoding corregido**: `Ã³/Ã¡/Ã©/Ã­/Ã±/Ãº/ÃÂ` → `ó/á/é/í/ñ/ú/·`. 14 ocurrencias. BOM ignorado. Validación: ya no quedan sustituciones "Opción"/"Perú"/"España".
+2. **Posters**: nueva función `fetchPosters(mediaIds: List<Long>): Map<Long, String>` que consulta `/wp-json/wp/v2/media/{id}?_fields=source_url` en paralelo (`amap`) y devuelve `Map<id, source_url>`.
+   - REST search ahora pasa siguiente parámetro `_fields=id,link,title,featured_media`.
+   - Por cada item REST, attach `featured_media` poster (o fallback a `posterForUrl(link)` desde el caché de secciones).
+3. Imports nuevos: `amap` (com.lagradost.cloudstream3.amap).
+4. **Versione**: 15 → **16** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente).
+
+### Pendiente en dispositivo
+- Search "universal" debe mostrar Canal correctos: `Studio Universal Africa/Latin America/Calle 13 Universal/Silk Universal...` con póster.
+- Las etiquetas como "En Vivo - Opción 3" deben salir con acentos correctos ("Opción").
+
