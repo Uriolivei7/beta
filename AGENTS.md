@@ -4509,3 +4509,14 @@ Sitio: `https://kimeraweb.com` (índice de series, animes, dramas, películas y 
 ```
 - Primer arranque: abrir Home — las secciones cargan y se persisten (probar offline reiniciando la app y buscar algo).
 - Si el sitio sigue caído, otras secciones/búsquedas no funcionan — no es problema del plugin.
+
+## TeleonlineProvider — Cloudflare-blocking (17 Nov 2026 v19)
+- **Síntoma (usuario, 17 Nov, 21:48)**: plugin carga OK pero nada del home/búsqueda: `safeGet error (intento 1): timeout` durante toda la sesión. PC desde Europa carga la home en 0.8 s — el bloqueo es por Cloudflare contra IPs específicas (tú Android).
+- **Diagnóstico**: `safeGet` usaba cfKiller **solo en el segundo intento**, y el primer intento siempre timeoutea. El segundo tampoco escapaba.
+- **Fix**: ambos intentos usan `cfKiller` (Cloudflare challenge auto-resuelto por WebView incluido en CS3).
+- **Versiones**: `build.gradle.kts` 18 -> **19**; `plugins.json` Teleonline 18 -> **19** (`fileSize` pendiente).
+
+### Probado desde PC
+- `GET /` -> 200 (0.8 s)
+- `GET /canales/espana/` -> 200 (1.6 s)
+- `wp/v2/posts?search=universal` -> read timeout (25 s) — la REST API sigue saturada; el fallback local es lo que sirve entonces.

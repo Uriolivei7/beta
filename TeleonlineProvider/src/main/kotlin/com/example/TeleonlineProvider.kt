@@ -142,7 +142,7 @@ class TeleonlineProvider : MainAPI() {
     private suspend fun safeGet(url: String, timeoutSec: Long = 15L): String? {
         for (attempt in 1..2) {
             try {
-                val interceptor = if (attempt > 1) cfKiller else null
+                val interceptor = cfKiller
                 val res = app.get(url, timeout = timeoutSec * attempt, interceptor = interceptor)
                 if (res.isSuccessful) return res.text
             } catch (e: CancellationException) { throw e }
