@@ -4532,3 +4532,21 @@ Sitio: `https://kimeraweb.com` (índice de series, animes, dramas, películas y 
   - `fetchPosters()`: timeout 15 L → **6 L** para que no se distiendan tiempo.
   - Una sola llamada serial por sección en lugar de amap por n ids (secuencial pero tolerante a timeout).
 - **Versiones**: `build.gradle.kts` 19 → **20**; `plugins.json` Teleonline 19 → **20** (`fileSize` pendiente).
+
+## SeriesKaoProvider — Doctor Who embed69 LNK_CHALLENGE/LINK_SALT AES directo (18 Nov 2026 v44)
+- **Síntoma (usuario)**: Doctor Who S2E0 (`/vidurl/tt0436992-2x00/`) — logs `loadLinks`:
+  - `player HTTP 200 len=60760` (la página del player Embed69)
+  - `player sin dataLink/PoW; intentando WebView` → WebView devuelve `len=244 body='Access denied'` (top-level blocked)
+  - `dataLink JSON len=897` extraído, `items=1 resumen=[(LAT, 3)]` parseado OK
+  - `sin POW_CHALLENGE/SALT -> loadExtractor directo` ← bug: la página ya NO usa `POW_CHALLENGE`/`POW_SALT`, ahora usa **`LINK_CHALLENGE` + `LINK_SALT` (constante `'0cb84ec3aa0953fa4061feb8d708744b'` + `'6d07665b9850a0db'`)**. El provider solo reconoce los nombres `POW_*` → no ve los `LINK_*` → cae al path `loadExtractor directo` que CS3 no tiene para nada.
+  - `loadLinks FIN emitidos=0 resultado=ok` → "enlaces no encontrados"
+- **Causa raíz**: igual que SoloLatino v46, el player Embed69 (vidurl) migró a `LINK_CHALLENGE`/`LINK_SALT` con **AES-256-CBC directamente con SHA-256(LINK_CHALLENGE + LINK_SALT)** como key — sin PoW. El provider sólo reconocía los antiguos `POW_*`.
+- **Fix v44** (portado de SoloLatinoProvider v46, ambos archivos):
+  1. `SerieskaoProvider.kt` (path `loadLinks` inline): detecta `LINK_CHALLENGE`+`LINK_SALT`; cuando están presentes, omite WebView y deriva AES por `MessageDigest.SHA-256(LINK_CHALLENGE+LINK_SALT)`; sin PoW adicional. Log: `challenge keys: link=true legacy=false mode=LINK`.
+  2. `SerieskaoExtractors.kt` (path `extractKaoEmbed69` para embed69.org fallback): mismas detección + derivación. ASCII match con SoloLatino v46.
+  3. `readyJs` del WebView acepta `LINK_CHALLENGE` OR `POW_CHALLENGE` OR `POW_CHALLENGE||LINK_CHALLENGE`.
+- Versiones a **44** (`build.gradle.kts` + `plugins.json`; `fileSize` pendiente, sigue 87345).
+- Compilación pendiente por el usuario: `.\gradlew.bat :SerieskaoProvider:make --console=plain -q`.
+- **Pendiente en dispositivo**: imprimir en logcat `loadLinks challenge keys: link=true\n Items=1 resumen=[(LAT, 3)]\n loadLinks PoW solved/LINK derived\n loadLinks decrypted 3` y la lista de enlaces debe ya verse (streamwish, vidhide, voe latino) antes de "loadKaoSourceExtractor".
+
+## SeriesKaoProvider — VOE con solver ALTCHA (08 Oct 2026 v22)
