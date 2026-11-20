@@ -1,8 +1,10 @@
 ﻿package com.example
 
 import android.util.Base64
+import android.util.Log
 import com.lagradost.cloudstream3.app
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.async
@@ -133,10 +135,12 @@ object MoviePlusWorker {
     }
 
     private suspend fun connect(session: Session): Boolean {
+        Log.d("MoviePlusWorker", "connect start")
         for (attempt in 0 until 8) {
             try {
                 val challengeBody = json("schemaVersion" to 1, "versionCode" to VERSION_CODE).toByteArray(Charsets.UTF_8)
                 val (code1, text1) = post("/v2/client/challenge", challengeBody, emptyMap())
+                Log.d("MoviePlusWorker", "challenge attempt=$attempt code=$code1 len=${text1.length}")
                 if (code1 != 200) { delay(2500L); continue }
                 val challenge = JSONObject(text1).getString("challenge")
                 val signature = signB64(session, "MOVP-HYBRID-SESSION-V1\n$challenge\n${session.deviceId}")
@@ -148,6 +152,7 @@ object MoviePlusWorker {
                     "signature" to signature
                 ).toByteArray(Charsets.UTF_8)
                 val (code2, text2) = post("/v2/client/session", sessionBody, emptyMap())
+                Log.d("MoviePlusWorker", "session attempt=$attempt code=$code2 len=${text2.length}")
                 if (code2 != 200) {
                     session.sessionToken = JSONObject(text2).getString("sessionToken")
                     return true
@@ -162,6 +167,7 @@ object MoviePlusWorker {
         val body = json("schemaVersion" to 1, "deviceId" to session.deviceId, "channel" to "prod", "settingsProfile" to 7)
             .toByteArray(Charsets.UTF_8)
         val (code, text) = postRetry(session, "/v2/client/bootstrap", body, hybrid = true)
+        Log.d("MoviePlusWorker", "bootstrap code=$code len=${text.length}")
         if (code != 200) return false
         return try {
             val grants = JSONObject(text).optJSONObject("admission")?.optJSONObject("grants") ?: return false
@@ -179,6 +185,7 @@ object MoviePlusWorker {
     }
 
     private suspend fun newSession(): Session? = try {
+        Log.d("MoviePlusWorker", "newSession start")
         val s = generateIdentity()
         if (!connect(s)) null
         else if (!bootstrap(s)) null
@@ -349,6 +356,7 @@ object MoviePlusWorker {
     private fun availKey(id: Int, isMovie: Boolean) = "${if (isMovie) "movie" else "series"}_$id"
 
     suspend fun filterAvailable(items: List<Pair<Int, Boolean>>): Set<Int> {
+        Log.d("MoviePlusWorker", "filterAvailable items=${items.size}")
         val result = HashSet<Int>()
         val need = ArrayList<Pair<Int, Boolean>>()
         for ((id, isMovie) in items) {
@@ -359,7 +367,10 @@ object MoviePlusWorker {
             }
         }
         if (need.isEmpty()) return result
-        val token = ensureFirebaseToken() ?: return items.map { it.first }.toSet()
+        val token = withTimeoutOrNull(20000L) { ensureFirebaseToken() } ?: run {
+            Log.w("MoviePlusWorker", "filterAvailable token timeout/null -> fail-open ${items.size} ids")
+            return items.map { it.first }.toSet()
+        }
         for (chunk in need.chunked(100)) {
             try {
                 val docs = chunk.joinToString(",") {

@@ -4564,3 +4564,13 @@ Sitio: `https://kimeraweb.com` (índice de series, animes, dramas, películas y 
 - **Versiones**: `build.gradle.kts` = 1, `plugins.json` entrada Movie! Plus v1 (`fileSize` 0 pendiente).
 - **Compilación pendiente por el usuario**: `.\gradlew.bat :MoviePlusProvider:make --console=plain -q`. No ejecutada por regla del repo.
 - **Pendiente en dispositivo**: verificar home (8 filas), búsqueda, detalle y reproducción. El protocolo híbrido/Firebase es privado: si el servidor rota claves o rechaza el registro de nuevos keypairs, los enlaces no resolverán (igual le pasaría al cs3 original). Logs a mirar: `MoviePlusWorker` (post/connect/bootstrap), `MoviePlus` (loadLinks FIN).
+
+## MoviePlusProvider — logs y catálogo resilente (18 Nov 2026 v2)
+- **Síntoma (usuario)**: sin logs de `MoviePlus` en logcat; `getMainPage`/`search` no cargaban, por ende no se podía probar `load`/`loadLinks`.
+- **Causa**: el port v1 no tenía NINGÚN `Log.d` (a diferencia del cs3 original). Además `loadCatalog()` y `filterAvailable()` llamaban a la API privada (RSA 2048 + Firebase) sin timeout acotado, bloqueando el catálogo público aunque los mirrors GZIP respondieran.
+- **Fix v2**:
+  1. Logs en `loadCatalog` (start, liveUrls, cada mirror, movies/series), `getMainPage`, `search`, `load`, `loadLinks` (START/FIN), `MoviePlusWorker` (connect/challenge/session/bootstrap/newSession/filterAvailable) y `MoviePlusTmdb` (fallos).
+  2. `loadCatalog()`: `currentCatalogUrls()` envuelto en `withTimeoutOrNull(8000L)` → si la API privada no responde, se usan igual los 3 mirrors públicos.
+  3. `filterAvailable()`: `ensureFirebaseToken()` envuelto en `withTimeoutOrNull(20000L)` → si falla, fail-open devolviendo todos los ids (la fila se muestra igual).
+- **Versiones**: `build.gradle.kts` 1 → **2**; `plugins.json` Movie! Plus 1 → **2** (`fileSize` 0 pendiente).
+- **Logs a buscar**: `MoviePlus: loadCatalog start`, `MoviePlus: catalog <url> -> movies=N series=M`, `MoviePlus: getMainPage <fila> items=N shown=M`, `MoviePlusWorker: filterAvailable token timeout/null -> fail-open`.

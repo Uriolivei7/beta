@@ -1,5 +1,6 @@
 package com.example
 
+import android.util.Log
 import com.lagradost.cloudstream3.app
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -55,6 +56,7 @@ object MoviePlusCatalog {
     private val PUNCT = Regex("[^\\p{L}\\p{N}]+")
 
     suspend fun loadCatalog(): Pair<List<CatalogItem>, List<CatalogItem>> {
+        Log.d("MoviePlus", "loadCatalog start cache=${cacheMovies.size}/${cacheSeries.size}")
         val now = System.currentTimeMillis()
         if (cacheMovies.isNotEmpty() && now - cacheTime < CACHE_TTL_MS) return cacheMovies to cacheSeries
         return mutex.withLock {
@@ -62,17 +64,21 @@ object MoviePlusCatalog {
             if (cacheMovies.isNotEmpty() && now2 - cacheTime < CACHE_TTL_MS) return@withLock cacheMovies to cacheSeries
 
             val live = try {
-                MoviePlusWorker.currentCatalogUrls()
+                kotlinx.coroutines.withTimeoutOrNull(8000L) { MoviePlusWorker.currentCatalogUrls() } ?: emptyList()
             } catch (e: Exception) {
+                Log.w("MoviePlus", "currentCatalogUrls fallo: ${e.message}")
                 emptyList()
             }
+            Log.d("MoviePlus", "loadCatalog liveUrls=${live.size}")
             val urls = (live + MIRRORS).distinct()
             for (u in urls) {
                 try {
+                    Log.d("MoviePlus", "catalog fetch $u")
                     val resp = app.get(u, timeout = 60L)
                     val bytes = resp.body.bytes()
                     val json = GZIPInputStream(ByteArrayInputStream(bytes)).use { it.readBytes().decodeToString() }
                     val (m, s) = parseCatalog(json)
+                    Log.d("MoviePlus", "catalog $u -> movies=${m.size} series=${s.size}")
                     if (m.isEmpty() && s.isEmpty()) continue
                     cacheMovies = m
                     cacheSeries = s

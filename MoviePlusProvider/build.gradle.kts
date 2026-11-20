@@ -1,8 +1,8 @@
-// use an integer for version numbers
-version = 1
+﻿// use an integer for version numbers
+version = 2
 
 cloudstream {
-    description = "Movie! Plus — catálogo de películas, series, animes y más"
+    description = "Movie! Plus â€” catÃ¡logo de pelÃ­culas, series, animes y mÃ¡s"
     language = "es"
     authors = listOf("Ranita")
     status = 1
@@ -12,7 +12,7 @@ cloudstream {
 
 
 // AppUtils.parseJson es inline JVM 11 (AppUtils.class major 55); el root fuerza 1.8.
-// Alinear Java y Kotlin a 11 a nivel de módulo para evitar "Cannot inline bytecode built with JVM target 11".
+// Alinear Java y Kotlin a 11 a nivel de mÃ³dulo para evitar "Cannot inline bytecode built with JVM target 11".
 android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11

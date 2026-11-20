@@ -1,5 +1,7 @@
 package com.example
 
+import android.util.Log
+
 import com.lagradost.cloudstream3.app
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties
@@ -83,18 +85,21 @@ object MoviePlusTmdb {
     suspend fun movie(id: Int): TmdbMovie? = try {
         parseJson<TmdbMovie>(app.get(url("/movie/$id", "&append_to_response=credits")).text)
     } catch (e: Exception) {
+        Log.w("MoviePlusTmdb", "movie $id fallo: ${e.message}")
         null
     }
 
     suspend fun tv(id: Int): TmdbTv? = try {
         parseJson<TmdbTv>(app.get(url("/tv/$id", "&append_to_response=credits")).text)
     } catch (e: Exception) {
+        Log.w("MoviePlusTmdb", "tv $id fallo: ${e.message}")
         null
     }
 
     suspend fun season(tvId: Int, season: Int): List<TmdbEpisode> = try {
         parseJson<TmdbSeasonDetail>(app.get(url("/tv/$tvId/season/$season")).text)?.episodes ?: emptyList()
     } catch (e: Exception) {
+        Log.w("MoviePlusTmdb", "season $tvId/$season fallo: ${e.message}")
         emptyList()
     }
 

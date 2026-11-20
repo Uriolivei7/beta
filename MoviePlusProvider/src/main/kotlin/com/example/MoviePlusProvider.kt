@@ -1,5 +1,7 @@
 package com.example
 
+import android.util.Log
+
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.*
 import com.lagradost.cloudstream3.utils.AppUtils.parseJson
@@ -40,7 +42,9 @@ class MoviePlusProvider : MainAPI() {
     }
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
+        Log.d("MoviePlus", "getMainPage page=$page data=${request.data}")
         val (movies, series) = MoviePlusCatalog.loadCatalog()
+        Log.d("MoviePlus", "getMainPage catalog movies=${movies.size} series=${series.size}")
         val data = request.data
         val items = when {
             data == "latest_movies" -> movies.sortedByDescending { it.date }
@@ -60,10 +64,12 @@ class MoviePlusProvider : MainAPI() {
         val slice = items.drop(start).take(40)
         val avail = MoviePlusWorker.filterAvailable(slice.map { it.id to (it.type == MoviePlusCatalog.TYPE_MOVIE) })
         val shown = slice.filter { it.id in avail }.map { toSearch(it) }
+        Log.d("MoviePlus", "getMainPage ${request.name} items=${items.size} slice=${slice.size} avail=${avail.size} shown=${shown.size}")
         return newHomePageResponse(HomePageList(request.name, shown, false), start + 40 < items.size)
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
+        Log.d("MoviePlus", "search '$query' start")
         val (movies, series) = MoviePlusCatalog.loadCatalog()
         val q = MoviePlusCatalog.normalize(query.trim())
         if (q.isEmpty()) return emptyList()
@@ -73,10 +79,13 @@ class MoviePlusProvider : MainAPI() {
             .take(60)
             .toList()
         val avail = MoviePlusWorker.filterAvailable(matches.map { it.id to (it.type == MoviePlusCatalog.TYPE_MOVIE) })
-        return matches.filter { it.id in avail }.map { toSearch(it) }
+        val result = matches.filter { it.id in avail }.map { toSearch(it) }
+        Log.d("MoviePlus", "search '$query' -> ${result.size}")
+        return result
     }
 
     override suspend fun load(url: String): LoadResponse? {
+        Log.d("MoviePlus", "load $url")
         val id = url.substringAfterLast('/').substringBefore('?').toIntOrNull() ?: return null
         val isMovie = url.contains("/movie/")
         val item = if (isMovie) MoviePlusCatalog.findMovie(id) else MoviePlusCatalog.findSeries(id)
@@ -182,6 +191,7 @@ class MoviePlusProvider : MainAPI() {
         subtitleCallback: (SubtitleFile) -> Unit,
         callback: (ExtractorLink) -> Unit
     ): Boolean {
+        Log.d("MoviePlus", "loadLinks data=$data")
         val parts = data.substringAfterLast('/').split("|")
         if (parts.size < 2 || parts[0] != "mp") return false
         val id = parts[1].toIntOrNull() ?: return false
@@ -212,6 +222,7 @@ class MoviePlusProvider : MainAPI() {
                 found = true
             }
         }
+        Log.d("MoviePlus", "loadLinks FIN found=$found")
         return found
     }
 }
