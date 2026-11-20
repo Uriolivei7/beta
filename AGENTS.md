@@ -4550,3 +4550,17 @@ Sitio: `https://kimeraweb.com` (índice de series, animes, dramas, películas y 
 - **Pendiente en dispositivo**: imprimir en logcat `loadLinks challenge keys: link=true\n Items=1 resumen=[(LAT, 3)]\n loadLinks PoW solved/LINK derived\n loadLinks decrypted 3` y la lista de enlaces debe ya verse (streamwish, vidhide, voe latino) antes de "loadKaoSourceExtractor".
 
 ## SeriesKaoProvider — VOE con solver ALTCHA (08 Oct 2026 v22)
+
+## MoviePlusProvider — Plugin nuevo desde cs3 descompilado (18 Nov 2026 v1)
+- **Origen**: `MoviePlusProvider.cs3` (88 KB, v6, `com.cncverse.MoviePlusProviderPlugin`), descompilado con jadx 1.4.7 a Java y porteado a Kotlin (5 archivos).
+- **Arquitectura verificada**:
+  - Catálogo: `items_up.json.gz` desde 3 mirrors + URLs "live" del API privado; caché 30 min; `parseJson` (Jackson) de `movies`/`series` con campos `nameFile`/`othersNames`/`generos`/`urlImage`.
+  - Metadatos: TMDB v3 con key pública `ec4ff1b6...`, idioma `es-MX`, `append_to_response=credits`.
+  - Streams: API privada `https://api.appsxploit.dev/v2/client/*` con **firma híbrida** (par RSA 2048 efímero → SPKI registrado → headers `X-MOVP-Hybrid-Nonce/Session/Signature`; canon `MOVP-HYBRID-REQUEST-V1\nPOST\n<path>\n<sha256(body)>\n<nonce>\n<sha256(token)>` firmado SHA256withRSA).
+  - Firebase custom token → idToken para Firestore (`contentLinkVersions` = disponibilidad; `tv/{id}` = envelopes de episodios).
+  - `/playback` resuelve envelope opaco → URL HTTP final; `movie-variants` da `"calidad,_,tamaño,_,envelope"`.
+- **Puertos**: `MoviePlusProvider.kt` (provider), `MoviePlusCatalog.kt`, `MoviePlusTmdb.kt`, `MoviePlusWorker.kt` (protocolo), `MoviePlusProviderPlugin.kt`.
+- **Detalles críticos del port**: JADX invierte los `if (code == 200)` — corregidos según bytecode DEX (éxito: `code == 200` salvo `/session` que es `!= 200`). `AppUtils.parseJson` es inline JVM 11 → build.gradle.kts alinea Java+Kotlin a 11 (patrón ElChavo8TV). Sin kotlinx-serialization.
+- **Versiones**: `build.gradle.kts` = 1, `plugins.json` entrada Movie! Plus v1 (`fileSize` 0 pendiente).
+- **Compilación pendiente por el usuario**: `.\gradlew.bat :MoviePlusProvider:make --console=plain -q`. No ejecutada por regla del repo.
+- **Pendiente en dispositivo**: verificar home (8 filas), búsqueda, detalle y reproducción. El protocolo híbrido/Firebase es privado: si el servidor rota claves o rechaza el registro de nuevos keypairs, los enlaces no resolverán (igual le pasaría al cs3 original). Logs a mirar: `MoviePlusWorker` (post/connect/bootstrap), `MoviePlus` (loadLinks FIN).
