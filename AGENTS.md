@@ -4588,3 +4588,12 @@ Sitio: `https://kimeraweb.com` (índice de series, animes, dramas, películas y 
 - **Corolario**: el fix v3 de `/session` (code==200 = éxito) ya resuelve esto. v4 reduce el TTL de caché de 30 min → **5 min** para que el catálogo live se refresque antes tras instalar.
 - **Versiones**: `build.gradle.kts` 3 → **4**; `plugins.json` 3 → **4**.
 - **Pendiente**: compilar/instalar v4, esperar expiración de caché (o limpiar datos de la app) y buscar "spin" — esperado `loadCatalog liveUrls=3`, `catalog <live url> -> movies=19684 series=10606`, y Spin City en resultados.
+
+## NinjaProvider — Plugin nuevo (AnimeNINJA / veranime.ninja) (20 Nov 2026 v1)
+- **Contexto**: veranime.ninja volvió a estar **libre de Cloudflare** (verificado PC: 200 ~1s en home/search/detalle/reproductor con cualquier UA incluido okhttp, sin `Just a moment`). El markup es el **DooPlay original** (`article.item`, `#seasons`, `.episodios`, `li.dooplay_player_option` con `data-post`/`data-nume`/`data-type`). No es el verani.me de la v13+.
+- **Decisión**: reactivar el flujo sin quitar `VeranimeProvider` (v15, verani.me). Nuevo módulo `NinjaProvider/` (display "AnimeNINJA") con el código v12 de Veranime (commit `da6eb6e4`) renombrado: `NinjaProvider`, `NinjaPlugin`, TAG `AnimeNINJA`, `ByseExtractor` con tag renombrado.
+- **Código**: copia de v12 — incluye `getDoc()` con fallback WebView (fail-open, solo se activa si Cloudflare vuelve; no rompe cuando no hay challenge) y `ByseExtractor` para Filemoon/Byse.
+- **Versiones**: `build.gradle.kts` = 1; `plugins.json` entrada `NinjaProvider` v1 (`fileSize` 0 pendiente).
+- **Compilación pendiente por el usuario**: `.\gradlew.bat :NinjaProvider:make --console=plain -q`.
+- **Pendiente en dispositivo**: home (secciones), search (`?s=`), detalle (episodios con temporadas), loadLinks (doo_player_ajax → hub → mirrors). Logs: `adb logcat -s AnimeNINJA:V`.
+- **Si Cloudflare vuelve**: la regla es esperar a que lo quiten (como pasó esta vez). El fallback WebView no lo resolvió en su día — solo sirve de diagnóstico (`[home ...] challenge/error ... probando WebView` → `WebView no superó el challenge`).
