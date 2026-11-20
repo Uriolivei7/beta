@@ -153,10 +153,11 @@ object MoviePlusWorker {
                 ).toByteArray(Charsets.UTF_8)
                 val (code2, text2) = post("/v2/client/session", sessionBody, emptyMap())
                 Log.d("MoviePlusWorker", "session attempt=$attempt code=$code2 len=${text2.length}")
-                if (code2 != 200) {
+                if (code2 == 200) {
                     session.sessionToken = JSONObject(text2).getString("sessionToken")
                     return true
                 }
+                Log.w("MoviePlusWorker", "session inesperado code=$code2: ${text2.take(120)}")
             } catch (e: Exception) { }
             delay(2500L)
         }

@@ -4574,3 +4574,17 @@ Sitio: `https://kimeraweb.com` (índice de series, animes, dramas, películas y 
   3. `filterAvailable()`: `ensureFirebaseToken()` envuelto en `withTimeoutOrNull(20000L)` → si falla, fail-open devolviendo todos los ids (la fila se muestra igual).
 - **Versiones**: `build.gradle.kts` 1 → **2**; `plugins.json` Movie! Plus 1 → **2** (`fileSize` 0 pendiente).
 - **Logs a buscar**: `MoviePlus: loadCatalog start`, `MoviePlus: catalog <url> -> movies=N series=M`, `MoviePlus: getMainPage <fila> items=N shown=M`, `MoviePlusWorker: filterAvailable token timeout/null -> fail-open`.
+
+## MoviePlusProvider — Fix condición invertida /session (20 Nov 2026 v3)
+- **Síntoma (usuario)**: catálogo (18866 movies/9035 series), búsqueda y detalle funcionan, pero `loadLinks` da "enlaces no encontrados". Logs: `challenge attempt=N code=200 len=468` + `session attempt=N code=200 len=1103` ×8 → `filterAvailable token timeout/null -> fail-open` → `loadLinks FIN found=false`.
+- **Causa raíz**: el agente que analizó el DEX "corrigió" una condición de JADX que en realidad **no estaba invertida** para `/v2/client/session`. El servidor devuelve **HTTP 200 con `sessionToken`** (verificado en vivo desde PC: challenge 200 → session 200 len=1103 con token válido). El código v2 trataba `code2 == 200` como fallo y reintentaba 8 veces, agotando el tiempo antes de `ensureFirebaseToken()` → sinFirebase → sin Firestore → sin envelopes → sin streams.
+- **Fix v3**: en `connect()`: `if (code2 == 200) { sessionToken = ...; return true }`. Verificado en PC el flujo completo con la firma híbrida: challenge → session → bootstrap (200, `admission.grants` con `catalog`/`catalog-value`) → auth (200, customToken) → Firebase signInWithCustomToken (200, idToken). Todo el protocolo es correcto; solo faltaba esa condición.
+- **Versiones**: `build.gradle.kts` 2 → **3**; `plugins.json` Movie! Plus 2 → **3** (`fileSize` 0 pendiente).
+- **Pendiente**: compilar, instalar v3 y probar `loadLinks` — esperado: `connect` exitoso en attempt=0, `bootstrap code=200`, `filterAvailable` con token real, y links desde `/playback`.
+
+## MoviePlusProvider — Spin City / catálogo live (20 Nov 2026 v4)
+- **Reporte (usuario)**: buscar "spin" no muestra "Spin City" aunque sabe que está disponible.
+- **Verificado en PC**: Spin City (id 2359) **NO está** en el mirror fijo `items_up.json.gz` (18866 movies/9035 series), pero **SÍ está** en el catálogo **live** que devuelve `/v2/client/document`: `items_up_r1795160727117.json.gz` (19684 movies/10606 series). El código ya prioriza `live + MIRRORS`, pero con v2 el handshake fallaba → `liveUrls=0` → se usaba el mirror viejo.
+- **Corolario**: el fix v3 de `/session` (code==200 = éxito) ya resuelve esto. v4 reduce el TTL de caché de 30 min → **5 min** para que el catálogo live se refresque antes tras instalar.
+- **Versiones**: `build.gradle.kts` 3 → **4**; `plugins.json` 3 → **4**.
+- **Pendiente**: compilar/instalar v4, esperar expiración de caché (o limpiar datos de la app) y buscar "spin" — esperado `loadCatalog liveUrls=3`, `catalog <live url> -> movies=19684 series=10606`, y Spin City en resultados.

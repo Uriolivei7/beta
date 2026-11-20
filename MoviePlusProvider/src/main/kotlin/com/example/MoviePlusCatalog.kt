@@ -17,7 +17,7 @@ object MoviePlusCatalog {
     const val IMAGE_BASE = "https://image.tmdb.org/t/p"
     const val TYPE_MOVIE = 1
     const val TYPE_SERIES = 2
-    private const val CACHE_TTL_MS = 1_800_000L
+    private const val CACHE_TTL_MS = 300_000L
 
     private val MIRRORS = listOf(
         "https://raw.githubusercontent.com/dev-mplus01/mplus01T/main/db/items_up.json.gz",
