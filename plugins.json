@@ -1526,5 +1526,24 @@
   "iconUrl": "https://kimeraweb.com/apple-touch-icon.png",
   "language": "mx",
   "fileSize": 0
+ },
+ {
+  "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/MoviePlusProvider.cs3",
+  "status": 1,
+  "version": 1,
+  "apiVersion": 1,
+  "name": "Movie! Plus",
+  "internalName": "MoviePlusProvider",
+  "authors": [
+   "Ranita"
+  ],
+  "description": "https://api.appsxploit.dev",
+  "tvTypes": [
+   "Movie",
+   "TvSeries"
+  ],
+  "iconUrl": "https://image.tmdb.org/t/p/w342/8Gxv8gSFCU0XGDykEGv7zR1n2ua.jpg",
+  "language": "es",
+  "fileSize": 0
  }
 ]
