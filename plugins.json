@@ -1532,7 +1532,7 @@
   "status": 1,
   "version": 4,
   "apiVersion": 1,
-  "name": "Movie! Plus",
+  "name": "MoviePlus",
   "internalName": "MoviePlusProvider",
   "authors": [
    "Ranita"
@@ -1542,7 +1542,7 @@
    "Movie",
    "TvSeries"
   ],
-  "iconUrl": "https://image.tmdb.org/t/p/w342/8Gxv8gSFCU0XGDykEGv7zR1n2ua.jpg",
+  "iconUrl": "https://devxploit.xyz/img/favicon.ico",
   "language": "mx",
   "fileSize": 0
  }
