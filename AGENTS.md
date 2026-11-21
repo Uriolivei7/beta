@@ -4624,3 +4624,23 @@ Sitio: `https://kimeraweb.com` (índice de series, animes, dramas, películas y 
   - en `load()`: `mapNotNull { episode -> val stitched = episode.stitched ?: return@mapNotNull null; newEpisode(stitched) { ... } }` y `seasonInfo.featuredImage?.path`.
 - **Versiones**: `build.gradle.kts` 1 → **2**; `plugins.json` PlutotvProvider 1 → **2** (`fileSize` pendiente).
 - **Pendiente**: compilar, instalar y abrir Mr. Bean / Henry Danger — esperado `load: total episodes=N` y detalle con episodios.
+
+## ClowniptvProvider — Plugin nuevo desde cs3 descompilado (21 Nov 2026 v1)
+- **Origen**: `ClownIPTVProvider.cs3` (42 KB, v2, `com.cncverse.clowniptv.ClownIPTVPlugin`), descompilado con jadx y porteado a Kotlin (3 archivos).
+- **Arquitectura verificada**: playlist M3U único en `https://sxcce.dpdns.org/playlist.m3u` (vivo: 28817 canales, 3.8 MB, ~2.4s). Sin API REST, sin headers, sin tokens. `app.get(timeout = 60L)` (segundos en NiceHttp).
+- **Catálogo**: parseo de `#EXTINF` → `Channel(name, url, logo, section, adult)`; separadores `✦●✦`/`◆◆◆` cambian la sección; caché 30 min con Mutex. `url` es la línea M3U tal cual (sin `fixUrl`).
+- **Home**: 30 filas por país/idioma (India, PPV & Events, US, UK, Canada, Arabic, Latin America, Nordic, 24/7, Other, Adult 18+, ...) derivadas de `PREFIX_ROWS` (prefijos `tvg-name`). Página de 60 canales, isHorizontal=true.
+- **Search**: coincidencia literal case-insensitive sobre name/section, tope 200, filtro adulto vía SharedPreferences `ClownIPTV/show_adult`.
+- **load/loadLinks**: el "url" es el JSON del `Channel` (Jackson `AppUtils.parseJson/toJson`, no kotlinx-serialization); `loadLinks` emite un único `ExtractorLink` M3U8 con `source = name`.
+- **Correcciones JADX aplicadas**: `adult` = simple `||` (no ternario que marcaba todos como adultos); paginación `if (start < size) subList(...) else emptyList()`; `hasNext = start + 60 < size`. Eliminadas las dependencias de donación (`com.cncverse.donation`).
+- **Archivos**: `ClowniptvProvider.kt`, `ClowniptvPlugin.kt`, `build.gradle.kts` (v1, JVM 11 por AppUtils inline), `AndroidManifest.xml`, `plugins.json` entrada Clown IPTV v1 (`fileSize` 0 pendiente).
+- **Compilación pendiente por el usuario**: `.\gradlew.bat :ClowniptvProvider:make --console=plain -q`. No ejecutada por regla del repo.
+- **Pendiente en dispositivo**: verificar home (30 filas), búsqueda (ej. "espn"), detalle y reproducción de un canal. Logs: `adb logcat -s ClownIPTV:V`.
+
+## ClowniptvProvider — Sin contenido adulto + renombre a IPTV Global (21 Nov 2026 v1)
+- **Pedido del usuario**: quitar la fila/canales Adult 18+ (no quiere ese contenido en su repo) y cambiar el nombre "Clown IPTV" (nombre real del cs3 original, del autor cncverse) por uno neutral.
+- **Cambios**:
+  - Eliminados: campo `adult` del data class `Channel`, regex `ADULT`/`ADULT_NAME`, preferencia `show_adult`, función `showAdult()`, fila "Adult (18+)" de `ROW_ORDER`, y el early-return en `getMainPage`.
+  - Añadido `BLOCK = Regex("XXX|ADULT|18\\+|\\+18|PORN|EROTIC|NSFW", IGNORE_CASE)` y en `parse()`: `if (name.isNotEmpty() && !BLOCK.containsMatchIn(name) && !BLOCK.containsMatchIn(section))` → los canales bloqueados **nunca entran al catálogo** (ni en "Other").
+  - Nombre visible: `Clown IPTV` → **IPTV Global** (TAG `ClownIPTV` → `IPTVGlobal`, SharedPreferences `ClownIPTV` → `IPTVGlobal`, entrada plugins.json `name`/`description` actualizados). `internalName=ClowniptvProvider` sin cambios (no rompe el módulo).
+- **Nota**: "Clown IPTV" sí era el nombre real del plugin original (manifest: `com.cncverse.clowniptv.ClownIPTVPlugin`, `name=ClownIPTVProvider`); se cambió a petición del usuario.
