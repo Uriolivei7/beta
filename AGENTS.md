@@ -4597,3 +4597,30 @@ Sitio: `https://kimeraweb.com` (índice de series, animes, dramas, películas y 
 - **Compilación pendiente por el usuario**: `.\gradlew.bat :NinjaProvider:make --console=plain -q`.
 - **Pendiente en dispositivo**: home (secciones), search (`?s=`), detalle (episodios con temporadas), loadLinks (doo_player_ajax → hub → mirrors). Logs: `adb logcat -s AnimeNINJA:V`.
 - **Si Cloudflare vuelve**: la regla es esperar a que lo quiten (como pasó esta vez). El fallback WebView no lo resolvió en su día — solo sirve de diagnóstico (`[home ...] challenge/error ... probando WebView` → `WebView no superó el challenge`).
+
+## MoviePlusProvider — Logs completos para diagnóstico (20 Nov 2026 v5)
+- **Pedido**: logs para ver si falla en getMainPage/load/loadLinks o en la API.
+- **Logs existentes (48)**: verificado que cubren todas las etapas.
+  - `MoviePlus`: `getMainPage page/data`, `catalog movies/series`, resumen por fila (`items/slice/avail/shown`), `search '...' start/-> N`, `load id/isMovie/catalogItem`, `load movie tmdb`, `load series tmdb/seasons/episodes`, `loadLinks data/mode/envelopes/EMIT/FIN`.
+  - `MoviePlusCatalog`: `loadCatalog start`, `liveUrls`, `catalog fetch <url>`, `catalog <url> -> movies=N series=M`.
+  - `MoviePlusTmdb`: fallos de `movie/tv/season` con ID.
+  - `MoviePlusWorker`: `newSession/connect/challenge/session/bootstrap`, `auth HTTP`, `firebase signIn idToken=bool`, `playback HTTP/status/url`, `resolveMovie variants/effective/resolved`, `episodeEnvelopes <id> -> N`, `document HTTP`, `currentCatalogUrls -> N`, `filterAvailable items/token timeout/batchGet HTTP`.
+- **Versiones**: `build.gradle.kts` 4 → **5**; `plugins.json` 4 → **5**.
+- **Guía rápida**: si `playback HTTP != 200` o `status != resolved` → fallo en la API privada; si `resolveMovie resolved=0` → movie-variants vacíos; si `episodeEnvelopes -> 0` → Firestore sin datos; si `filterAvailable token timeout` → sesión/Firebase caída; si `loadLinks FIN found=false` sin EMIT → revisar la etapa anterior.
+
+## PlutotvProvider — Fix JSON null en Episode.clip (21 Nov 2026 v2)
+- **Síntoma (usuario)**: search y funcionan, pero `load()` de series (ej. Mr. Bean `6a79e770fb2bd7ef08f0e66e`) falla con:
+  ```
+  Instantiation of [simple type, class com.example.PlutotvProvider$Episode] value failed
+  for JSON property clip due to missing (therefore NULL) value for creator parameter clip
+  which is a non-nullable type ... SeasonInfo["seasons"]→Season["episodes"]→Episode["clip"]
+  ```
+- **Causa raíz**: la API de Pluto devuelve `"clip": null` en episodios, pero el data class `Episode` declaraba `val clip: Clip` (non-nullable) → Jackson no puede instanciar → excepción → `load()` muere.
+- **Fix v2**:
+  - `Episode`: **todos los campos nullable con defaults** (`id=""`, `name=""`, ..., `stitched: Stitched? = null`, `covers = emptyList()`, `clip: Clip? = null`).
+  - `SeasonInfo`: `featuredImage: FeaturedImage? = null`, `image=null`, resto con defaults.
+  - `FeaturedImage.path` y `Cover.url` ahora nullable.
+  - `Stitched.path/type` con defaults null.
+  - en `load()`: `mapNotNull { episode -> val stitched = episode.stitched ?: return@mapNotNull null; newEpisode(stitched) { ... } }` y `seasonInfo.featuredImage?.path`.
+- **Versiones**: `build.gradle.kts` 1 → **2**; `plugins.json` PlutotvProvider 1 → **2** (`fileSize` pendiente).
+- **Pendiente**: compilar, instalar y abrir Mr. Bean / Henry Danger — esperado `load: total episodes=N` y detalle con episodios.

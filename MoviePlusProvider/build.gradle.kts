@@ -1,5 +1,5 @@
 ﻿// use an integer for version numbers
-version = 4
+version = 5
 
 cloudstream {
     description = "Movie! Plus â€” catÃ¡logo de pelÃ­culas, series, animes y mÃ¡s"
