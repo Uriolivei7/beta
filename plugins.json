@@ -1372,7 +1372,7 @@
   "tvTypes": [
    "Live"
   ],
-  "iconUrl": "https://avatars.githubusercontent.com/u/70979529?v=4",
+  "iconUrl": "https://i.pinimg.com/736x/dd/ad/8a/ddad8ae0256f0081ca75da1cb9786928.jpg",
   "language": "un",
   "fileSize": 0
  },
@@ -1569,7 +1569,7 @@
  {
   "url": "https://raw.githubusercontent.com/Uriolivei7/beta/builds/ClowniptvProvider.cs3",
   "status": 1,
-  "version": 1,
+  "version": 2,
   "apiVersion": 1,
   "name": "IPTVGlobal",
   "internalName": "ClowniptvProvider",
