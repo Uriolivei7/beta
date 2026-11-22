@@ -4644,3 +4644,10 @@ Sitio: `https://kimeraweb.com` (índice de series, animes, dramas, películas y 
   - Añadido `BLOCK = Regex("XXX|ADULT|18\\+|\\+18|PORN|EROTIC|NSFW", IGNORE_CASE)` y en `parse()`: `if (name.isNotEmpty() && !BLOCK.containsMatchIn(name) && !BLOCK.containsMatchIn(section))` → los canales bloqueados **nunca entran al catálogo** (ni en "Other").
   - Nombre visible: `Clown IPTV` → **IPTV Global** (TAG `ClownIPTV` → `IPTVGlobal`, SharedPreferences `ClownIPTV` → `IPTVGlobal`, entrada plugins.json `name`/`description` actualizados). `internalName=ClowniptvProvider` sin cambios (no rompe el módulo).
 - **Nota**: "Clown IPTV" sí era el nombre real del plugin original (manifest: `com.cncverse.clowniptv.ClownIPTVPlugin`, `name=ClownIPTVProvider`); se cambió a petición del usuario.
+
+## ClowniptvProvider — Excepción Adult Swim (21 Nov 2026 v2)
+- **Reporte (usuario)**: el canal "Adult Swim" (bloque de animación de Cartoon Network) no aparecía porque el filtro `BLOCK` incluye `ADULT` y lo descartaba. Ese canal **no es contenido para adultos**.
+- **Fix v2**: añadido `ALLOW = Regex("ADULT\s*SWIM", IGNORE_CASE)` y helper `isBlocked(name, section)`:
+  - si el nombre o la sección contienen "Adult Swim" → **permitido** (excepción antes del bloqueo).
+  - si no → se aplica el `BLOCK` normal (`XXX|ADULT|18+|\+18|PORN|EROTIC|NSFW`).
+- **Versiones**: `build.gradle.kts` 1 → **2**; `plugins.json` ClowniptvProvider 1 → **2**.

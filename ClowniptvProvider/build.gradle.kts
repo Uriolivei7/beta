@@ -1,5 +1,5 @@
 ﻿// use an integer for version numbers
-version = 1
+version = 2
 
 cloudstream {
     description = "Clown IPTV â€” canales en vivo del mundo (M3U pÃºblico)"
