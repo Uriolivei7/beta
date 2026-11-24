@@ -122,7 +122,8 @@ object MoviePlusWorker {
             val headers = if (hybrid && session != null) hybridHeaders(session, path, body) else emptyMap()
             last = post(path, body, headers)
             if (last.first == 200 || last.first in noRetry) return last
-            delay(2500L)
+
+            delay(2000L + i * 1000L)
         }
         return last
     }
@@ -204,8 +205,12 @@ object MoviePlusWorker {
             "issuedAtMs" to (System.currentTimeMillis() - 1000),
             "resolveProvider" to true
         ).toByteArray(Charsets.UTF_8)
-        val (code, text) = postRetry(session, "/v2/client/playback", body, hybrid = true, tries = 3, noRetry = setOf(503, 429))
-        if (code != 200) { Log.w("MoviePlusWorker", "playback HTTP $code len=${text.length}"); return null }
+
+        val (code, text) = postRetry(session, "/v2/client/playback", body, hybrid = true, tries = 4)
+        if (code != 200) {
+            Log.w("MoviePlusWorker", "playback HTTP $code len=${text.length} body=${text.take(200)}")
+            return null
+        }
         return try {
             val o = JSONObject(text)
             val st = o.optString("status"); val okv = o.optBoolean("ok")
@@ -265,7 +270,8 @@ object MoviePlusWorker {
             val jobs = byQuality.values.map { (quality, size, envelope) ->
                 async(Dispatchers.IO) {
                     try {
-                        val url = resolveFresh(envelope) ?: return@async null
+
+                        val url = playback(s, envelope) ?: resolveFresh(envelope) ?: return@async null
                         if (!seen.add(url)) return@async null
                         val link = ResolvedLink(quality, size, url)
                         onLink?.invoke(link)

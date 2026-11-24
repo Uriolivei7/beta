@@ -4651,3 +4651,21 @@ Sitio: `https://kimeraweb.com` (índice de series, animes, dramas, películas y 
   - si el nombre o la sección contienen "Adult Swim" → **permitido** (excepción antes del bloqueo).
   - si no → se aplica el `BLOCK` normal (`XXX|ADULT|18+|\+18|PORN|EROTIC|NSFW`).
 - **Versiones**: `build.gradle.kts` 1 → **2**; `plugins.json` ClowniptvProvider 1 → **2**.
+
+
+## MoviePlusProvider — 503 intermitente en /playback (24 Nov 2026 v6)
+
+**Síntoma (log del usuario, build v5 en dispositivo)**: búsqueda, detalle y episodios cargan bien, pero `loadLinks` da "enlaces no encontrados" en algunos títulos: `High School Musical 2` (3 variantes), `Doctor Who S1E1`, `Estoy en la Banda S1E1/S2E8`. `Doctor Who S3E4` sí emite y reproduce.
+
+**Arquitectura verificada en el log (no es un fallo del parseo ni de la firma)**: `challenge 200` → `session 200` → `bootstrap 200` → `auth 200` → `firebase signIn idToken=true`; catálogo vivo `items_up_r1795505475133.json.gz` con `movies=19697 series=10645`; `episodeEnvelopes 57243 -> 166`, `matching=1`. Todo llega hasta el último paso.
+
+**Causa raíz**: `POST /v2/client/playback` responde **HTTP 503 (len 306/321)** de forma intermitente (mismo patrón en películas y episodios; el mismo episodio falla en S1E1 y funciona en S3E4). En `MoviePlusWorker.kt` el `playback` tenía `noRetry = setOf(503, 429)`, así que un único 503 se trataba como definitivo y el enlace se descartaba sin reintentar. Agravante: `resolveFresh()` abría una sesión nueva (challenge+session+bootstrap) por cada resolución; en películas se abrían 3 sesiones en paralelo para las 3 variantes (`resolveMovie variants=3 effective=3` → tres `newSession`), aumentando la presión sobre el API.
+
+**Fix (v6, `MoviePlusWorker.kt`)**:
+1. `playback` ya NO excluye 503/429 del reintento: `tries = 4` y backoff progresivo en `postRetry` (`2000L + i * 1000L` ms). Un 503 transitorio ya no convierte un enlace válido en "enlaces no encontrados".
+2. Log del cuerpo del error (`playback HTTP $code len=... body=...`) para distinguir rate-limit de caída del servidor si vuelve a fallar.
+3. `resolveMovie` reutiliza la sesión ya autenticada de `movie-variants` para los playback de las variantes (1 sesión en vez de 4), con `resolveFresh()` como respaldo si esa sesión falla.
+
+**Estado**: versiones a **6** (`MoviePlusProvider/build.gradle.kts` + `plugins.json`, `fileSize` sigue 0 pendiente). Cambios verificados por lectura del archivo; **no compilado por regla del repo**. Comando: `.\\gradlew.bat :MoviePlusProvider:make --console=plain -q`.
+
+**Pendiente en dispositivo**: instalar v6 y repetir los mismos títulos. Esperado en logcat (`adb logcat -s MoviePlus:V MoviePlusWorker:V`): los `playback HTTP 503` deben ir seguidos de reintentos y terminar en `playback resolved url=...` / `loadLinks EMIT` / `FIN found=true`. Si persiste el fallo, el nuevo `body=` del 503 dirá si el servidor reporta cuota, saturación o archivo no disponible; no hay fix de parser que recupere un envelope que el propio API rechaza.
