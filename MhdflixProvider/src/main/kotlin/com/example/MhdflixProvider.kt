@@ -678,9 +678,7 @@ class MhdflixProvider : MainAPI() {
                 resolved.map { v ->
                     async {
                         try {
-                            // Sin seguir redirects: hls4 en /stream/ devuelve 301 al CDN real.
-                            // El probe anterior seguia el redirect pero emitia la URL 301 original
-                            // -> el reproductor recibia 301 y fallaba con 2004.
+
                             val r = app.get(v.url, headers = probeHeaders, timeout = 10L, allowRedirects = false)
                             val code = r.code
                             if (code in 200..299) {
@@ -758,8 +756,7 @@ class MhdflixProvider : MainAPI() {
             val html = resp.text
 
             val m3u8Regex = Regex("""(https?://[^"'<>\s]+\.(?:m3u8|mp4)[^"'<>\s]*)""")
-            // Nunca emitir la propia página embed como media (su slug puede
-            // terminar en .mp4) → 3003 garantizado en ExoPlayer.
+
             val directMatch = m3u8Regex.findAll(html).map { it.value }
                 .firstOrNull { isMediaCandidate(it, url) }
             if (directMatch != null) {
@@ -1102,9 +1099,7 @@ class MhdflixProvider : MainAPI() {
                                 Log.e("Mhdflix-Links", "StreamTape custom falló: ${e.message}")
                             }
                         }
-                        // loadExtractor solo consulta los extractores NATIVOS de CloudStream:
-                        // no invoca los extractores propios del plugin, por eso VOE y
-                        // StreamWish siempre daban 0 links. Los llamamos directamente.
+
                         if (!foundByExtractor && isVoeFamily(fixedUrl)) {
                             try {
                                 val voeLinks = mutableListOf<ExtractorLink>()
@@ -1113,8 +1108,7 @@ class MhdflixProvider : MainAPI() {
                                         if (link.url.isNotBlank()) voeLinks.add(link)
                                     }
                                 }
-                                // newExtractorLink es suspend: emitir desde el cuerpo de loadLinks,
-                                // no desde el callback del extractor.
+
                                 for (link in voeLinks) {
                                     callback(newExtractorLink(name, "$linkName [Voe]", link.url, link.type) {
                                         this.referer = link.referer.ifBlank { referer }
