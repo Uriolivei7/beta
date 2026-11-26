@@ -4673,3 +4673,38 @@ Sitio: `https://kimeraweb.com` (índice de series, animes, dramas, películas y 
 ### Verificado en dispositivo (24 Nov 2026, v6 instalada)
 El log del usuario confirma que el 503 desapareció en los casos reportados: `High School Musical 2` emite 3 variantes (`resolveMovie 13649 resolved=3` → `FIN found=true`), `Doctor Who` (id 57243) S3E1 y S1E1 y `Estoy en la Banda` (id 21650) S1E1 emiten y llegan a `Using CronetDataSource`. No aparece ningún `playback HTTP 503`.
 **Caso nuevo y distinto**: `Doctor Who` id=121 (serie clásica, `seasons=27`, `episodes=694` en TMDB) da `episodeEnvelopes 121 -> 134` pero `matching=0` para `mp|121|14|8` → `FIN found=false`. No es el 503: es desalineación entre la numeración de TMDB (con la que `load()` construye el `data`) y la de Firestore (con la que se parsean los envelopes). Pendiente de diagnosticar si el usuario quiere que se cubra también.
+
+### API bloqueada por Cloudflare (25 Nov 2026) — sin fix de código
+Nuevo log del dispositivo: `/v2/client/challenge` devuelve **HTTP 403 len=4917** en los 8 intentos de `connect()`, para todas las búsquedas y `loadLinks`. Ya no es el 503 del playback (ese fix v6 sigue vigente y en este log no aparece ni un 503).
+**Verificado desde el PC**: el mismo POST a `https://api.appsxploit.dev/v2/client/challenge` (body `{"schemaVersion":1,"versionCode":90354}`) devuelve **403, 4550 bytes**, `Server: cloudflare`, `CF-RAY: ...-MIA`, cuerpo `Attention Required! | Cloudflare` → **"Sorry, you have been blocked"** (regla de firewall/WAF, error tipo 1020). Probado también con UA Chrome/127 + `Accept`/`Origin`/`Referer`: **sigue 403**. Es bloqueo global del host/API, no del UA ni de la IP del dispositivo.
+**Consecuencia**: sin `sessionToken` no hay `bootstrap`, ni token Firebase, ni `episodeEnvelopes` (vuelve 0), ni `playback` → `loadLinks FIN found=false` en todo. Búsqueda y detalle siguen funcionando porque usan el mirror GZIP de GitHub y TMDB (fuentes públicas independientes del API).
+**No hay fix desde el plugin**: los 8 reintentos y los headers ya están cubiertos; un bloqueo 1020 de Cloudflare no se salta cambiando el parser. Solo se resuelve si el operador del API levanta la regla (o si se publica un host/mirror alternativo). Pending: revisar el API más tarde; no subir versión nueva por este síntoma.
+
+### Analisis de la APK oficial v17.5 (25 Nov 2026) — protocolo con atestacion nativa
+El usuario aporto `MoviePlus.arm64-v8a.apk` (122934491 B, v17.5). Extraidos 13 `classes*.dex` + `resources.arsc` con .NET, y decompilados 26316 `.java` con jadx 1.4.7 (descargado a `%TEMP%\opencode\jadx`; algunas clases `defpackage` ofuscadas fallaron con NPE de `codeCache`, pero lo relevante se extrajo).
+**Datos clave de la APK**: `BuildConfig.VERSION_CODE = 90363` (nuestro port usa 90354); constantes `MOVP-HYBRID-LEASE-SCOPE-V1`, `X-MOVP-App-Version`, `X-MOVP-App-Version-Code`, `X-MOVP-Install-ID`, `X-MOVP-Device-Metadata`; rutas `/v2/client/{challenge,session,bootstrap}` **y `/v3/client/{...}`**, mas `/v1/security/{challenge,session,settings-bootstrap}`; clases `com.dvex.movp.security.NativeSecurityClient`, `NativeSecurityTransport`, `LocalInstallationCodec`, `InstalledApkIdentity`, `MOVP-INSTALLATION-PUBLIC-KEY-RECOVERY-V1`; librerias nativas `libmovp_.so`, `libcurl_bridge.so`, `libmovp_streaming.so` (curl/TLS propio).
+**Medido en vivo desde el PC** (mismo body `{"schemaVersion":1,"versionCode":90363}`):
+- `POST /v2/client/challenge` -> **403**, HTML `Sorry, you have been blocked` (Cloudflare, CF-RAY). Igual con UA Chrome y headers `X-MOVP-*`; el v2 esta retirado/bloqueado.
+- `POST /v3/client/challenge` -> **400** JSON `{"error":"invalid_security_payload","schemaVersion":1,"ok":false,...}` — pasa el WAF, pero exige un payload de seguridad que no enviamos.
+- `GET/POST /v1/security/challenge` -> **401** `{"ok":false,"error":"hybrid_admission_required"}` — admision hibrida previa obligatoria.
+**Veredicto**: la app oficial no solo cambio de version: incorporo una **atestacion de instalacion** generada por codigo nativo (`NativeSecurityClient` + identidad de la APK instalada). El plugin corre dentro de CloudStream y no puede presentar esa identidad; por eso reproduce la app y no el plugin. No hay fix de proceso/headers/version que salte esto, y no se intenta falsificar la atestacion. El fix v6 del 503 sigue vigente e intacto. Estado: sin cambios de codigo por este hallazgo.
+
+## MhdflixProvider — VOE/StreamWish directos + redirect de VidHide hls4 (26 Nov 2026 v23)
+
+**Sintoma (usuario)**: episodio `https://ww2.mhdflix.com/tvs/episode/69843/naturaleza-humana-1` muestra solo el mirror VidHide (`filelions.top`); hls4 no reproduce y hls2 se congela cada 3-4 s. No aparecen los mirrors StreamWish (`hglink.to`) ni VOE (`voe.sx`).
+
+**Verificado desde el PC** (`GET /api/links?id=69843&type=episode`): 3 enlaces reales — `filelions.top/embed/...` (familia VidHide, con hls2/hls3/hls4 en el packer), `hglink.to/e/...` (pantalla `Loading...` con `main.js`), `voe.sx/e/...` (stub JS que redirige a `caseyseemavoid.com/e/...`, y ese mirror sirve el gate **ALTCHA** `Confirm you're human`).
+
+**Causas raiz**:
+1. `loadExtractor` solo consulta los extractores NATIVOS de CloudStream, nunca los registrados por el plugin (`MhdflixVoe`, `MhdflixStreamWish`). Por eso VOE y StreamWish daban 0 links aunque el API los entregara.
+2. `MhdflixVoe.parseHtml` hacia `return false` ante `altcha-widget` (sin solver). Faltaba el PoW PBKDF2 y el POST de solucion con las cookies de la sesion del mirror.
+3. El probe de `tryVidHideProMh` seguia redirects automaticamente y emitia la URL original del mirror: hls4 es `/stream/...` que devuelve 301 al CDN real, asi que el reproductor recibia el 301 y fallaba con 2004.
+
+**Fix (v23)**:
+- `Extractors.kt`: portado el solver ALTCHA completo desde SeriesKao (`solveAltcha` + `solveAltchaPow` con `mhdPowMutex` y 2 hilos + `pbkdf2Sha256`), con `voeHeaders` movido a `companion object`, `parseHtml(..., cookies)` y cookies del MISMO fetch del mirror; anadidos mirrors `caseyseemavoid.com` y `teresapoliticallearn.com`.
+- `MhdflixProvider.kt`: dispatch directo en `processApiLinks` para hosts VOE y StreamWish; parseo robusto de StreamWish (m3u8/`file:`/mp4/packer/iframes) + fallback WebView con `MhdflixProvider.pluginContext` y `MhBridge`; el probe de VidHide ahora usa `allowRedirects=false`, resuelve `Location`, prueba el destino y emite la URL final del CDN (patron Danimados v15/SeriesKao v33), conservando la original como fallback.
+- `newExtractorLink` es suspend: los links de VOE se acumulan y se emiten desde el cuerpo de `loadLinks`, no desde el callback del extractor; los callbacks de StreamWish son `suspend`.
+
+**Estado**: versiones a **23** (`build.gradle.kts` + `plugins.json`, `fileSize` pendiente). Verificado con `kotlinc` suelto (jvm-target 11): 0 errores de suspension/scope; los unicos mensajes restantes son por el classpath de OkHttp incompleto en esa verificacion aislada (`FormBody`/`Headers`), preexistentes en el modulo. **No compilado con Gradle por regla del repo.** Comando: `.\\gradlew.bat :MhdflixProvider:make --console=plain -q`.
+
+**Pendiente en dispositivo**: instalar v23 y probar el episodio. Esperado en `adb logcat -s Mhdflix-Links:V MhdflixVoe:V`: `[Voe] ALTCHA resuelto en N intentos` -> `POST solucion -> code=200 gate=false` -> `Found M3U8/MP4` -> `VOE directo OK`; `[SW] fetch len=...` -> `SW-Web HTML len=...` -> `StreamWish directo OK`; y `[VH-Pro] probe hls4 redirect -> 200` con `emit hls4` apuntando al CDN final. El hls2 que se congela es throttle del CDN (veredicto previo de PlusHD/UniqueStream), no se arregla desde el plugin: el cambio busca que hls4 quede como alternativa reproducible.
